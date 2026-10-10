@@ -128,6 +128,27 @@ pub fn bindDirectArithmetic(
     return bindSelectedArithmetic(allocator, template, &direct.active_component_indices, &.{log_size}, layout);
 }
 
+/// Exact V4 selected direct-gate program binding used by the S31 manifest.
+/// The 64-bit part hashes describe the rebound program; the full pinned AIR
+/// bytes make this a cryptographic identity rather than a semantic-hash key.
+pub fn directProgramBindingDigest(air_bytes: []const u8, bound: *const Bundle) ![32]u8 {
+    if (bound.components.len != 1) return error.InvalidCircuitBundle;
+    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    hash.update("S31-DIRECT-GATE-PROGRAM-V1\x00");
+    hash.update(air_bytes);
+    var index_word: [4]u8 = undefined;
+    std.mem.writeInt(u32, &index_word, @intCast(direct.active_component_indices[0]), .little);
+    hash.update(&index_word);
+    var part_word: [8]u8 = undefined;
+    for (bound.components[0].parts) |part| {
+        std.mem.writeInt(u64, &part_word, part.semantic_hash, .little);
+        hash.update(&part_word);
+    }
+    var result: [32]u8 = undefined;
+    hash.final(&result);
+    return result;
+}
+
 fn bindSelectedArithmetic(
     allocator: std.mem.Allocator,
     template: *const Bundle,

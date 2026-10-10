@@ -194,7 +194,7 @@ pub fn prove(
     pcs: core.pcs.config_v2.PcsConfigV2,
     request: Request,
 ) !Proof {
-    return proveInternal(allocator, source, values, template, pcs, request, null);
+    return proveInternal(allocator, source, values, template, pcs, request, null, null);
 }
 
 /// Experimental engine adapter. This is not a source authentication API:
@@ -212,7 +212,7 @@ pub fn proveSelected(
         .source_digest = selected.geometry.source_digest,
         .manifest_digest = selected.manifest_digest,
         .plan = selected.fixedCircuitPlan(),
-    }, selected);
+    }, selected, null);
 }
 
 /// Guarded adapter for the source-pinned S31 envelope. The engine checks
@@ -228,7 +228,11 @@ pub fn proveSelectedSourceBound(
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();
-    return proveSelected(allocator, source, values, &template, selected);
+    return proveInternal(allocator, source, values, &template, selected.geometry.live.pcs, .{
+        .source_digest = selected.geometry.source_digest,
+        .manifest_digest = selected.manifest_digest,
+        .plan = selected.fixedCircuitPlan(),
+    }, selected, pin);
 }
 
 fn proveInternal(
@@ -239,6 +243,7 @@ fn proveInternal(
     pcs: core.pcs.config_v2.PcsConfigV2,
     request: Request,
     selected: ?*const schedule.SelectedSchedule,
+    pin: ?provenance.SourcePin,
 ) !Proof {
     try validatePublicOutputShape(source);
     var pp = try request.plan.preprocessed(allocator, source);
@@ -250,6 +255,7 @@ fn proveInternal(
     var bound = try air.bindDirectArithmetic(allocator, template, pp.traceLogSize(), &layout);
     defer bound.deinit();
     if (bound.components.len != 1) return error.InvalidManyRoster;
+    if (pin) |source_pin| try provenance.validateCircuitProgram(selected orelse return error.InvalidManyProvenance, source_pin, &bound);
     const specs = try many.expectedRoster(request.plan, pp.traceLogSize(), bound.total_constraints);
     if (specs.count != live.count or specs.main_width != live.tree_columns[1] or
         specs.interaction_width != live.tree_columns[2]) return error.InvalidManyRoster;
@@ -494,7 +500,7 @@ pub fn verifyBorrowed(
     public_words: [8]u32,
     proof: BorrowedProof,
 ) !void {
-    return verifyBorrowedInternal(allocator, source, template, pcs, request, null, public_words, proof);
+    return verifyBorrowedInternal(allocator, source, template, pcs, request, null, null, public_words, proof);
 }
 
 /// Experimental selected verifier adapter. The caller must bind source,
@@ -514,7 +520,7 @@ pub fn verifySelectedBorrowed(
         .source_digest = selected.geometry.source_digest,
         .manifest_digest = selected.manifest_digest,
         .plan = selected.fixedCircuitPlan(),
-    }, selected, public_words, proof);
+    }, selected, null, public_words, proof);
 }
 
 /// Guarded selected verifier adapter; proof-byte decoding stays in S31.
@@ -529,7 +535,11 @@ pub fn verifySelectedSourceBoundBorrowed(
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();
-    return verifySelectedBorrowed(allocator, source, &template, selected, public_words, proof);
+    return verifyBorrowedInternal(allocator, source, &template, selected.geometry.live.pcs, .{
+        .source_digest = selected.geometry.source_digest,
+        .manifest_digest = selected.manifest_digest,
+        .plan = selected.fixedCircuitPlan(),
+    }, selected, pin, public_words, proof);
 }
 
 fn verifyBorrowedInternal(
@@ -539,6 +549,7 @@ fn verifyBorrowedInternal(
     pcs: core.pcs.config_v2.PcsConfigV2,
     request: Request,
     selected: ?*const schedule.SelectedSchedule,
+    pin: ?provenance.SourcePin,
     public_words: [8]u32,
     proof: BorrowedProof,
 ) !void {
@@ -589,6 +600,7 @@ fn verifyBorrowedInternal(
     var bound = try air.bindDirectArithmetic(allocator, template, circuit_log, &layout);
     defer bound.deinit();
     if (bound.components.len != 1) return error.InvalidManyRoster;
+    if (pin) |source_pin| try provenance.validateCircuitProgram(selected orelse return error.InvalidManyProvenance, source_pin, &bound);
     const specs = try many.expectedRoster(request.plan, circuit_log, bound.total_constraints);
     const count = if (selected) |value| value.geometry.slot_count else specs.count;
     const main_width = if (selected != null) @as(usize, live.tree_columns[1]) else specs.main_width;

@@ -75,6 +75,22 @@ pub fn validate(
     }
 }
 
+/// Called after the guarded adapter binds the pinned AIR to the selected
+/// direct circuit. A jointly forged slot-0 and descriptor hash must still
+/// equal the actual bound program identity.
+pub fn validateCircuitProgram(
+    selected: *const schedule.SelectedSchedule,
+    pin: SourcePin,
+    bound: *const air.Bundle,
+) !void {
+    if (selected.geometry.slot_count == 0 or pin.descriptors.len == 0)
+        return error.InvalidManyProvenance;
+    const actual = try air.directProgramBindingDigest(pin.air_bundle_bytes, bound);
+    if (!std.meta.eql(actual, selected.geometry.slots[0].program_binding_sha256) or
+        !std.meta.eql(actual, pin.descriptors[0].program_binding_sha256))
+        return error.InvalidManyProvenance;
+}
+
 fn nativeTemplateDigest(direct_circuit_source_bytes: []const u8) Digest {
     var h = Sha256.init(.{});
     h.update("S31-BOUNDED-NATIVE-AIR-TEMPLATE-V4\x00");
