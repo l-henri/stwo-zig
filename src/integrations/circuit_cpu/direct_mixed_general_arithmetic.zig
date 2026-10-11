@@ -1399,4 +1399,71 @@ test "mixed trace audit checks reserved public and every gate row" {
     pp.columns[7].values[0] = original_mult.add(M31.one());
     try std.testing.expectError(error.InvalidMixedTraceAuditFixed, auditCircuitRows(allocator, source, values, &pp, &base, plan));
     pp.columns[7].values[0] = original_mult;
+    try checkNonBitPrivateSelector();
+}
+
+fn checkNonBitPrivateSelector() !void {
+    const allocator = std.testing.allocator;
+    const initial = [4]M31{ M31.fromCanonical(1), M31.fromCanonical(2), M31.fromCanonical(3), M31.fromCanonical(4) };
+    const constant = M31.fromCanonical(13);
+    const final = try @import("repeated_step_chip.zig").direct(initial, constant, 16);
+    // This is the direct S31 selector's producing gate. Both branches have
+    // the same value, so even b = 2 can retain all eight honest public words.
+    // The Boolean producer must reject it independently of output binding.
+    for (0..2) |honest_bit| {
+        var ctx = try circuit.builder.Context(QM31).init(allocator, 8);
+        defer ctx.deinit();
+        var plan: many.Plan = .{ .count = 1 };
+        plan.calls[0] = .{
+            .call_id = 0,
+            .rounds = 16,
+            .constant = constant,
+            .input = undefined,
+            .output = undefined,
+        };
+        var inputs: [4]circuit.builder.Var = undefined;
+        var results: [4]circuit.builder.Var = undefined;
+        for (0..4) |lane| {
+            inputs[lane] = try ctx.guessM31(QM31.fromBase(initial[lane]));
+            results[lane] = try ctx.guessM31(QM31.fromBase(final[lane]));
+            plan.calls[0].output[lane] = results[lane].idx;
+        }
+        const bit = try ctx.newVar(QM31.fromBase(M31.fromCanonical(@intCast(honest_bit))));
+        try ctx.mulInto(bit, bit, bit);
+        const equal_branch_difference = try ctx.sub(inputs[0], inputs[0]);
+        const selected = try ctx.add(inputs[0], try ctx.mul(bit, equal_branch_difference));
+        plan.calls[0].input[0] = selected.idx;
+        for (1..4) |lane| plan.calls[0].input[lane] = inputs[lane].idx;
+        var outputs: [8]circuit.builder.Var = undefined;
+        outputs[0] = selected;
+        for (1..4) |lane| outputs[lane] = try ctx.add(inputs[lane], results[lane]);
+        for (0..4) |lane| outputs[4 + lane] = try ctx.mul(inputs[lane], results[lane]);
+        try ctx.setOutputs(&outputs);
+        try ctx.finalize(false);
+        try circuit.common.finalize.padToTargets(QM31, &ctx, .{
+            .eq = 0,
+            .qm31_ops = circuit.common.finalize.paddedSize(ctx.circuit.nQm31OpsRows()),
+            .triple_xor = 0,
+            .m31_to_u32 = 0,
+            .blake_g_gate = 0,
+        });
+        const source = CircuitView.fromBuilder(&ctx.circuit);
+        try std.testing.expectEqual(bit.idx, source.mul[0].in0);
+        try std.testing.expectEqual(bit.idx, source.mul[0].in1);
+        try std.testing.expectEqual(bit.idx, source.mul[0].out);
+        var pp = try plan.preprocessed(allocator, source);
+        defer pp.deinit(allocator);
+        var honest_base = try direct_trace.writeBase(allocator, ctx.values(), &pp);
+        defer honest_base.deinit();
+        try std.testing.expectEqual(source.nQm31OpsRows(), try auditCircuitRows(allocator, source, ctx.values(), &pp, &honest_base, plan));
+
+        const forged_values = try allocator.dupe(QM31, ctx.values());
+        defer allocator.free(forged_values);
+        forged_values[bit.idx] = QM31.fromBase(M31.fromCanonical(2));
+        try std.testing.expectEqualDeep(ctx.values()[selected.idx], forged_values[selected.idx]);
+        var forged_base = try direct_trace.writeBase(allocator, forged_values, &pp);
+        defer forged_base.deinit();
+        try std.testing.expectEqualSlices(QM31, honest_base.output_values, forged_base.output_values);
+        try std.testing.expectError(error.InvalidMixedTraceAuditGate, auditCircuitRows(allocator, source, forged_values, &pp, &forged_base, plan));
+    }
 }
