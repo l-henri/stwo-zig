@@ -583,7 +583,6 @@ pub fn verifySourceBoundBorrowed(
     defer capture.deinit(allocator);
 }
 
-
 test "general mixed native proof uses source-derived one through eight call rosters" {
     const allocator = std.heap.smp_allocator;
     inline for (1..max_calls + 1) |n| {
@@ -670,8 +669,7 @@ test "general mixed native proof uses source-derived one through eight call rost
         try verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed);
         for (0..proof.sum_count) |index| {
             borrowed.claimed_sums[index] = borrowed.claimed_sums[index].add(QM31.one());
-            try std.testing.expectError(error.InvalidMixedLookupSum,
-                verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed));
+            try std.testing.expectError(error.InvalidMixedLookupSum, verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed));
             borrowed.claimed_sums[index] = borrowed.claimed_sums[index].sub(QM31.one());
         }
         borrowed.claimed_sums[1] = borrowed.claimed_sums[1].add(QM31.one());
@@ -683,8 +681,7 @@ test "general mixed native proof uses source-derived one through eight call rost
         borrowed.claimed_sums[2] = borrowed.claimed_sums[2].add(QM31.one());
         if (proof.sum_count < max_components) {
             borrowed.claimed_sums[proof.sum_count] = QM31.one();
-            try std.testing.expectError(error.NonCanonicalMixedClaimedSums,
-                verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed));
+            try std.testing.expectError(error.NonCanonicalMixedClaimedSums, verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed));
             borrowed.claimed_sums[proof.sum_count] = QM31.zero();
         }
         var wrong_words = words;
