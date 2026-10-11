@@ -13,6 +13,7 @@ const cairo = @import("stwo_cairo_frontend");
 const old = @import("prove.zig");
 const air = @import("air.zig");
 const many = @import("private_many_boundary.zig");
+const plan_admission = @import("direct_many_plan_admission.zig");
 const preflight = @import("direct_many_preflight.zig");
 const schedule = @import("direct_many_schedule.zig");
 const provenance = @import("direct_many_provenance.zig");
@@ -72,18 +73,6 @@ fn validatePublicOutputShape(source: CircuitView) !void {
     if (source.output.len != 9) return error.InvalidManyPublicStatement;
     for (source.output, 0..) |address, index|
         if (address != @as(u32, @intCast(index + 2))) return error.InvalidManyPublicStatement;
-}
-
-/// Reject impossible V4 source geometry before Plan.validate allocates a
-/// producer bitmap of n_vars or direct preprocessing allocates use counts.
-/// This is a guarded-adapter resource limit; a future V4 revision should put
-/// the same check inside the public Plan API, which is in the V4 template hash.
-fn validateBoundedResourceShape(source: CircuitView) !void {
-    const rows = source.nQm31OpsRows();
-    if (rows < 16 or rows > (1 << 16) or !std.math.isPowerOfTwo(rows))
-        return error.InvalidManyCircuitRows;
-    if (source.n_vars < 11 or source.n_vars > 4 * rows + 32)
-        return error.InvalidManyCircuitVariables;
 }
 
 const max_main_width = many.circuit_main_width + 17 * many.max_calls;
@@ -237,7 +226,7 @@ pub fn proveSelectedSourceBound(
     selected: *const schedule.SelectedSchedule,
     pin: provenance.SourcePin,
 ) !Proof {
-    try validateBoundedResourceShape(source);
+    try plan_admission.requireResourceShape(source);
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();
@@ -554,7 +543,7 @@ pub fn verifySelectedSourceBoundBorrowed(
     public_words: [8]u32,
     proof: BorrowedProof,
 ) !void {
-    try validateBoundedResourceShape(source);
+    try plan_admission.requireResourceShape(source);
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();

@@ -216,11 +216,9 @@ pub fn selectGeometry(
     for (candidate.slots[0..candidate.slot_count], roster.slice(), live.factSlice(), 0..) |slot, expected, fact, index| {
         if (slot.preprocessed_count > n_fixed or slot.relation_count > 2)
             return error.InvalidManySchedule;
-        const wanted_source: SourceKind = switch (expected.kind) {
-            .circuit => .bundled_circuit,
-            .chip => .tagged_chip,
-            .bridge => .tagged_bridge,
-        };
+        const wanted_source = try registry.canonicalKindAt(index, candidate.call_count);
+        if (expected.kind != registry.entry(wanted_source).component_kind)
+            return error.InvalidManySchedule;
         try registry.requireLiveFact(wanted_source, fact);
         if (slot.kind != expected.kind or slot.source_kind != wanted_source or
             slot.call_id != expected.call_id or slot.proof_index != index or

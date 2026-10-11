@@ -63,6 +63,16 @@ pub fn entry(kind: SourceKind) Entry {
     };
 }
 
+/// The registry, rather than a caller's candidate or a mutable legacy Plan,
+/// selects the only V4 component sequence: circuit, N chips, N bridges.
+pub fn canonicalKindAt(index: usize, count: u8) !SourceKind {
+    if (count == 0 or count > many.max_calls or index >= 1 + 2 * @as(usize, count))
+        return error.UnregisteredManyAirDependency;
+    if (index == 0) return .bundled_circuit;
+    if (index <= count) return .tagged_chip;
+    return .tagged_bridge;
+}
+
 /// This is an admission invariant, not an extraction of dependencies from the
 /// AIR evaluator. Each listed relation remains a reviewed formula obligation.
 pub fn requireLiveFact(kind: SourceKind, fact: preflight.Fact) !void {
@@ -103,6 +113,17 @@ fn parseDigest(comptime hex: []const u8) [32]u8 {
 }
 
 test "V4 registry rejects changed source and lookup dependencies" {
+    for (1..many.max_calls + 1) |n| {
+        const count: u8 = @intCast(n);
+        try std.testing.expectEqual(SourceKind.bundled_circuit, try canonicalKindAt(0, count));
+        for (1..1 + n) |index|
+            try std.testing.expectEqual(SourceKind.tagged_chip, try canonicalKindAt(index, count));
+        for (1 + n..1 + 2 * n) |index|
+            try std.testing.expectEqual(SourceKind.tagged_bridge, try canonicalKindAt(index, count));
+        try std.testing.expectError(error.UnregisteredManyAirDependency, canonicalKindAt(1 + 2 * n, count));
+    }
+    try std.testing.expectError(error.UnregisteredManyAirDependency, canonicalKindAt(0, 0));
+
     var fact: preflight.Fact = .{
         .kind = .chip,
         .call_id = 0,
