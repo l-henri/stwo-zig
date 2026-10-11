@@ -68,6 +68,7 @@ pub const steps = [_]Step{
     .{ .name = "circuit-recursion-cuda-resident", .description = "Build the fully resident PIE-to-root CUDA prover", .scope = .cairo_cuda },
     .{ .name = "check-cairo-cuda-local", .description = "Compile the full Cairo CUDA product without a GPU or CUDA runtime", .scope = .cairo_cuda },
     .{ .name = "test-cairo-cuda-local", .description = "Test canonical CUDA source admission and table geometry without a GPU", .scope = .cairo_cuda },
+    .{ .name = "test-cairo-cuda-relation-local", .description = "Test relation graph scratch admission and stream execution without a GPU", .scope = .cairo_cuda },
     .{ .name = "test-stwo-prover-fft", .description = "Test circle transforms, radix scheduling and coefficient parity", .scope = .prover },
     .{ .name = "test-stwo-prover-sampling", .description = "Test sampled values and independent circle polynomial evaluation", .scope = .prover },
     .{ .name = "test-stwo-core-blake2s", .description = "Test BLAKE2s streams and SIMD lifted leaves", .scope = .core },
@@ -303,7 +304,7 @@ pub const configure = [_]Configure{
             .frontend = "riscv",
             .backend = "metal",
             .role = "cli",
-            .protocol_manifest = "rv32im-zkvm-v1+lifted-pcs-v1+metal-runtime-v2+authenticated-core-aot-v2+rv32im-zkvm-poseidon2-v1",
+            .protocol_manifest = "rv32im-zkvm-v1+lifted-pcs-v1+metal-runtime-v2+authenticated-core-aot-v2+rv32im-zkvm-poseidon2-v1+csp-ecdsa-typed-recovery-v1",
         }},
     },
     .{ .scope = .package, .role = .package_exports, .product_ids = &.{ "stwo-core", "stwo-prover", "stwo" }, .module_roots = &.{ "src/products/prover/root.zig", "src/stwo.zig" }, .generated_module_roots = &.{"generated:options:"}, .dependency_module_roots = package_dependencies.core_prover_products_package_roots, .allowed_module_files = &.{ "src/stwo.zig", "build_support/graph/identity/emitter.zig" }, .allowed_module_prefixes = &.{ "src/products/core", "src/products/prover" }, .external_tools = &.{"python3"}, .constructors = &.{"products/libraries.addProducts"}, .constructed_products = &.{
