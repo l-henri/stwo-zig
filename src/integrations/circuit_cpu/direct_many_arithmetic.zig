@@ -439,6 +439,15 @@ fn proveInternal(
         }
     }
     try checkRuntimeHandles(prover.air.component_prover.ComponentProver, allocator, handles[0..count], live);
+    if (pin) |source_pin| {
+        const value = selected orelse return error.InvalidManyProvenance;
+        try provenance.validateBoundNativeComponents(
+            value,
+            source_pin,
+            chips[0..value.geometry.call_count],
+            bridges[0..value.geometry.call_count],
+        );
+    }
     scheme_owned = false;
     var stark = try Engine.prove(allocator, handles[0..count], &channel, scheme, .{ .include_all_preprocessed_columns = true });
     try order.accept(.pcs_proof);
@@ -692,6 +701,15 @@ fn verifyBorrowedInternal(
         }
     }
     try checkRuntimeHandles(core.air.components.Component, allocator, handles[0..count], live);
+    if (pin) |source_pin| {
+        const value = selected orelse return error.InvalidManyProvenance;
+        try provenance.validateBoundNativeComponents(
+            value,
+            source_pin,
+            chips[0..value.geometry.call_count],
+            bridges[0..value.geometry.call_count],
+        );
+    }
     var capture: core.verifier.ProofCapture(H) = undefined;
     try core.verifier.verifyBorrowedExWithProofCapture(
         H,

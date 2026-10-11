@@ -6,6 +6,8 @@
 const std = @import("std");
 const air = @import("air.zig");
 const schedule = @import("direct_many_schedule.zig");
+const chip = @import("tagged_many_chip.zig");
+const bridge = @import("tagged_many_bridge.zig");
 
 const Digest = [32]u8;
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -89,6 +91,62 @@ pub fn validateCircuitProgram(
     if (!std.meta.eql(actual, selected.geometry.slots[0].program_binding_sha256) or
         !std.meta.eql(actual, pin.descriptors[0].program_binding_sha256))
         return error.InvalidManyProvenance;
+}
+
+/// Check the concrete chip and bridge objects that the guarded prover or
+/// verifier passes as AIR handles. The bridge carries the full compiled call;
+/// the chip carries its ID, constant, height, and trace offsets. Native AIR
+/// source bytes remain closed and embedded in `nativeProgramDigest`.
+pub fn validateBoundNativeComponents(
+    selected: *const schedule.SelectedSchedule,
+    pin: SourcePin,
+    chips: []const chip.Component,
+    bridges: []const bridge.Component,
+) !void {
+    try selected.validateShape();
+    const count: usize = selected.geometry.call_count;
+    if (chips.len != count or bridges.len != count or pin.descriptors.len != selected.geometry.slot_count)
+        return error.InvalidManyProvenance;
+    for (chips, bridges, 0..) |live_chip, live_bridge, id| {
+        const chip_index = 1 + id;
+        const bridge_index = 1 + count + id;
+        const chip_slot = selected.geometry.slots[chip_index];
+        const bridge_slot = selected.geometry.slots[bridge_index];
+        const chip_descriptor = pin.descriptors[chip_index];
+        const bridge_descriptor = pin.descriptors[bridge_index];
+        const call = live_bridge.boundary;
+        const log_size = chip.validateRounds(call.rounds) catch return error.InvalidManyProvenance;
+        if (call.call_id != id or !std.meta.eql(call, selected.geometry.calls[id]) or
+            live_chip.call_id != call.call_id or !std.meta.eql(live_chip.constant, call.constant) or
+            live_chip.log_size != log_size or
+            live_chip.main_offset != chip_slot.main_offset or
+            live_chip.interaction_offset != chip_slot.interaction_offset or
+            live_bridge.main_offset != bridge_slot.main_offset or
+            live_bridge.interaction_offset != bridge_slot.interaction_offset or
+            chip_slot.trace_log_size != log_size or
+            bridge_slot.trace_log_size != bridge.log_size or
+            chip_slot.source_kind != .tagged_chip or bridge_slot.source_kind != .tagged_bridge or
+            chip_slot.kind != .chip or bridge_slot.kind != .bridge or
+            chip_slot.call_id == null or chip_slot.call_id.? != call.call_id or
+            bridge_slot.call_id == null or bridge_slot.call_id.? != call.call_id or
+            chip_descriptor.source_kind != .tagged_chip or bridge_descriptor.source_kind != .tagged_bridge or
+            chip_descriptor.version != descriptor_version or bridge_descriptor.version != descriptor_version or
+            chip_descriptor.call_id == null or chip_descriptor.call_id.? != call.call_id or
+            bridge_descriptor.call_id == null or bridge_descriptor.call_id.? != call.call_id or
+            chip_descriptor.source_node_id == null or chip_descriptor.input_node_id == null or
+            chip_descriptor.source_node_id != bridge_descriptor.source_node_id or
+            chip_descriptor.input_node_id != bridge_descriptor.input_node_id)
+            return error.InvalidManyProvenance;
+        const source_node_id = chip_descriptor.source_node_id.?;
+        const input_node_id = chip_descriptor.input_node_id.?;
+        const chip_digest = nativeProgramDigest(.tagged_chip, pin.native_template_sha256, source_node_id, input_node_id, call);
+        const bridge_digest = nativeProgramDigest(.tagged_bridge, pin.native_template_sha256, source_node_id, input_node_id, call);
+        if (!std.meta.eql(chip_digest, chip_slot.program_binding_sha256) or
+            !std.meta.eql(chip_digest, chip_descriptor.program_binding_sha256) or
+            !std.meta.eql(bridge_digest, bridge_slot.program_binding_sha256) or
+            !std.meta.eql(bridge_digest, bridge_descriptor.program_binding_sha256))
+            return error.InvalidManyProvenance;
+    }
 }
 
 fn nativeTemplateDigest(direct_circuit_source_bytes: []const u8) Digest {
