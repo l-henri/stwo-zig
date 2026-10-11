@@ -127,4 +127,11 @@ test "Gate tuple Horner order and LogUp residual equations" {
     // Zero denominators make the paired residual vanish regardless of diff.
     const degenerate = LogupTerm(QM31){ .numerator = QM31.one(), .denominator = QM31.zero() };
     try std.testing.expect((try pairLogupConstraint(Context, &ctx, degenerate, degenerate, z)).eql(QM31.zero()));
+
+    // An unused Gate output has multiplicity zero. At this tuple's compression
+    // pole its singleton 0/0 AIR residual cannot constrain the claimed diff.
+    const unused_output = try logupTerm(Context, &ctx, .{ polynomial, alpha }, QM31.zero(), &tuple);
+    try std.testing.expect(unused_output.denominator.eql(QM31.zero()));
+    try std.testing.expect((try singleLogupConstraint(Context, &ctx, unused_output, z)).eql(QM31.zero()));
+    try std.testing.expect((try singleLogupConstraint(Context, &ctx, unused_output, z.add(QM31.one()))).eql(QM31.zero()));
 }
