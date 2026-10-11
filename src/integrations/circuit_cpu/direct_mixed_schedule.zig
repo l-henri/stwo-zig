@@ -1,7 +1,8 @@
 //! Witness-free selected geometry for the experimental mixed AIR profile.
 //!
-//! No proof entrypoint consumes this schedule yet. The caller must rebuild it
-//! from sealed source; a mutable returned value is not a verification key.
+//! Fixed N=3 and N=4 native proof adapters consume this geometry, but cannot
+//! authenticate a caller's S31 source by themselves. The source-pinned wrapper
+//! must rebuild it; a mutable returned value is not a verification key.
 const std = @import("std");
 const core = @import("stwo_core");
 const circuit = @import("stwo_circuit_frontend");
