@@ -208,6 +208,7 @@ pub fn proveSelected(
     template: *const air.Bundle,
     selected: *const schedule.SelectedSchedule,
 ) !Proof {
+    try plan_admission.requireResourceShape(source);
     try selected.validateShape();
     return proveInternal(allocator, source, values, template, selected.geometry.live.pcs, .{
         .source_digest = selected.geometry.source_digest,
@@ -248,7 +249,7 @@ fn proveInternal(
     pin: ?provenance.SourcePin,
 ) !Proof {
     try validatePublicOutputShape(source);
-    var pp = try request.plan.preprocessed(allocator, source);
+    var pp = try plan_admission.BoundedPlan.fromLegacy(request.plan).preprocessed(allocator, source);
     defer pp.deinit(allocator);
     if (selected) |value| try value.revalidate(allocator, &pp, template);
     const live = if (selected) |value| value.geometry.live else try preflight.inspect(allocator, &pp, template, request.plan);
@@ -479,6 +480,7 @@ pub fn verify(
     public_words: [8]u32,
     proof: *const Proof,
 ) !void {
+    try plan_admission.requireResourceShape(source);
     if (!std.meta.eql(pcs, proof.pcs_config)) return error.InvalidManyPcsConfig;
     return verifyBorrowed(allocator, source, template, pcs, request, public_words, .{
         .output_values = proof.output_values,
@@ -526,6 +528,7 @@ pub fn verifySelectedBorrowed(
     public_words: [8]u32,
     proof: BorrowedProof,
 ) !void {
+    try plan_admission.requireResourceShape(source);
     try selected.validateShape();
     return verifyBorrowedInternal(allocator, source, template, selected.geometry.live.pcs, .{
         .source_digest = selected.geometry.source_digest,
@@ -566,7 +569,7 @@ fn verifyBorrowedInternal(
     proof: BorrowedProof,
 ) !void {
     try validatePublicOutputShape(source);
-    var pp = try request.plan.preprocessed(allocator, source);
+    var pp = try plan_admission.BoundedPlan.fromLegacy(request.plan).preprocessed(allocator, source);
     defer pp.deinit(allocator);
     if (selected) |value| try value.revalidate(allocator, &pp, template);
     const live = if (selected) |value| value.geometry.live else try preflight.inspect(allocator, &pp, template, request.plan);
@@ -773,6 +776,18 @@ test "V4 guarded adapters reject oversized circuit variables before allocation" 
         .stark_proof = &unused_stark,
         .circuit_hash = [_]u8{0} ** 32,
     };
+    var unused_bundle: air.Bundle = undefined;
+    var unused_proof: Proof = undefined;
+    const request: Request = .{
+        .source_digest = [_]u8{0} ** 32,
+        .manifest_digest = [_]u8{0} ** 32,
+        .plan = .{},
+    };
+    try std.testing.expectError(error.InvalidManyCircuitVariables, prove(tiny.allocator(), source, &.{}, &unused_bundle, undefined, request));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, proveSelected(tiny.allocator(), source, &.{}, &unused_bundle, &selected));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, verify(tiny.allocator(), source, &unused_bundle, undefined, request, [_]u32{0} ** 8, &unused_proof));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, verifyBorrowed(tiny.allocator(), source, &unused_bundle, undefined, request, [_]u32{0} ** 8, borrowed));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, verifySelectedBorrowed(tiny.allocator(), source, &unused_bundle, &selected, [_]u32{0} ** 8, borrowed));
     try std.testing.expectError(error.InvalidManyCircuitVariables, proveSelectedSourceBound(tiny.allocator(), source, &.{}, &selected, pin));
     try std.testing.expectError(error.InvalidManyCircuitVariables, verifySelectedSourceBoundBorrowed(tiny.allocator(), source, &selected, pin, [_]u32{0} ** 8, borrowed));
     source.add = gates[0..15];

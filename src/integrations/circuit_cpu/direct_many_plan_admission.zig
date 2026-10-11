@@ -69,8 +69,16 @@ test "version-2 bounded Plan rejects sparse variables before allocating" {
     var pp = try admitted.preprocessed(std.testing.allocator, source);
     defer pp.deinit(std.testing.allocator);
 
+    // Exact 16-row budget: 4 × 16 + 32 variables are admitted, the next
+    // value fails before a one-byte allocator can be touched.
+    source.n_vars = max_vars_per_row * 16 + extra_vars;
+    try admitted.validate(source, std.testing.allocator);
+    source.n_vars += 1;
     var tiny_storage: [1]u8 = undefined;
     var tiny = std.heap.FixedBufferAllocator.init(&tiny_storage);
+    try std.testing.expectError(error.InvalidManyCircuitVariables, admitted.validate(source, tiny.allocator()));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, admitted.preprocessed(tiny.allocator(), source));
+
     source.n_vars = 1 << 30;
     try std.testing.expectError(error.InvalidManyCircuitVariables, admitted.validate(source, tiny.allocator()));
     try std.testing.expectError(error.InvalidManyCircuitVariables, admitted.preprocessed(tiny.allocator(), source));
