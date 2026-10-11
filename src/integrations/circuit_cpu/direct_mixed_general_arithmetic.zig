@@ -98,6 +98,18 @@ pub const BorrowedProof = struct {
     circuit_hash: [32]u8,
 };
 
+/// Optional, execution-only timing. These values never enter the transcript,
+/// proof envelope, manifest, AIR, or verifier. `prove_body_ns` runs from
+/// function entry to proof assembly and includes the recorder snapshot; it
+/// excludes deferred cleanup after the return expression. The S31 caller's
+/// outer timer remains authoritative for its complete native interval.
+pub const Timing = struct {
+    prove_body_ns: u64,
+    interaction_pow_ns: u64,
+    pcs_prove_ns: u64,
+    fri_pow_ns: u64,
+};
+
 const ChipInteraction = union(enum) {
     pair: pair_chip.Interaction,
     many: many_chip.Interaction,
@@ -311,6 +323,21 @@ pub fn proveSourceBound(
     air_bytes: []const u8,
     selected: *const Selected,
 ) !Proof {
+    return proveSourceBoundWithTiming(allocator, source, values, source_bytes, air_bytes, selected, null);
+}
+
+/// The same source-bound proof with opt-in diagnostics. The caller-owned slot
+/// is written only after a successful proof; no timing value is channel-mixed.
+pub fn proveSourceBoundWithTiming(
+    allocator: std.mem.Allocator,
+    source: CircuitView,
+    values: []const QM31,
+    source_bytes: []const u8,
+    air_bytes: []const u8,
+    selected: *const Selected,
+    timing: ?*Timing,
+) !Proof {
+    var total_timer: std.time.Timer = if (timing != null) try std.time.Timer.start() else undefined;
     if (selected.plan.count == 0 or selected.plan.count > max_calls)
         return error.InvalidMixedSelection;
     try plan_admission.requireResourceShape(source);
@@ -377,7 +404,9 @@ pub fn proveSourceBound(
     try selectedColumns(main_views[0..main_width], selected, base.columns, chip_base[0..selected.plan.count], bridge_base[0..selected.plan.count], true);
     try commit(&scheme, allocator, main_views[0..main_width], &channel);
     try order.accept(.main_commitment);
+    const interaction_pow_start_ns: u64 = if (timing != null) total_timer.read() else 0;
     const nonce = channel.grind(circuit.common.component_list.INTERACTION_POW_BITS);
+    const interaction_pow_end_ns: u64 = if (timing != null) total_timer.read() else 0;
     channel.mixU64(nonce);
     try order.accept(.interaction_pow_nonce);
     const lookup = try core.channel.lookup_transcript.drawLookupElements(allocator, &channel);
@@ -445,21 +474,61 @@ pub fn proveSourceBound(
         }
     }
     try checkRuntimeHandles(prover.air.component_prover.ComponentProver, allocator, handles[0..selected.geometry.slot_count], selected);
+    var recorder: prover.stage_profile.Recorder = undefined;
+    if (timing != null)
+        recorder = prover.stage_profile.Recorder.initWithOptions(allocator, "s31_mixed_general", "prove", .{ .capture_tasks = false });
+    defer if (timing != null) recorder.deinit();
+    const pcs_prove_start_ns: u64 = if (timing != null) total_timer.read() else 0;
     scheme_owned = false;
-    var stark = try Engine.prove(allocator, handles[0..selected.geometry.slot_count], &channel, scheme, .{ .include_all_preprocessed_columns = true });
+    var stark = try Engine.prove(allocator, handles[0..selected.geometry.slot_count], &channel, scheme, .{
+        .include_all_preprocessed_columns = true,
+        .recorder = if (timing != null) &recorder else null,
+    });
+    const pcs_prove_end_ns: u64 = if (timing != null) total_timer.read() else 0;
     try order.accept(.pcs_proof);
     try order.finish();
     errdefer stark.deinit(allocator);
+    var fri_pow_ns: u64 = 0;
+    if (timing != null) {
+        var profile = try recorder.snapshot(allocator);
+        defer profile.deinit(allocator);
+        var count: usize = 0;
+        var seconds: f64 = 0;
+        collectFriPowStage(profile.stages, &count, &seconds);
+        if (count != 1 or !std.math.isFinite(seconds) or seconds < 0)
+            return error.InvalidMixedFriPowTiming;
+        fri_pow_ns = @intFromFloat(seconds * std.time.ns_per_s);
+        if (fri_pow_ns > pcs_prove_end_ns - pcs_prove_start_ns)
+            return error.InvalidMixedFriPowTiming;
+    }
+    const output_values = try allocator.dupe(QM31, base.output_values);
+    errdefer allocator.free(output_values);
+    if (timing) |slot| slot.* = .{
+        .prove_body_ns = total_timer.read(),
+        .interaction_pow_ns = interaction_pow_end_ns - interaction_pow_start_ns,
+        .pcs_prove_ns = pcs_prove_end_ns - pcs_prove_start_ns,
+        .fri_pow_ns = fri_pow_ns,
+    };
     return .{
         .allocator = allocator,
         .pcs_config = pcs,
-        .output_values = try allocator.dupe(QM31, base.output_values),
+        .output_values = output_values,
         .interaction_pow_nonce = nonce,
         .claimed_sums = sums,
         .sum_count = selected.geometry.slot_count,
         .stark_proof = stark,
         .circuit_hash = identity,
     };
+}
+
+fn collectFriPowStage(nodes: []const prover.stage_profile.StageNode, count: *usize, seconds: *f64) void {
+    for (nodes) |node| {
+        if (std.mem.eql(u8, node.id, "proof_of_work")) {
+            count.* += 1;
+            seconds.* = node.seconds;
+        }
+        if (node.children) |children| collectFriPowStage(children, count, seconds);
+    }
 }
 
 /// Caller-scoped native adapter, not a standalone verifier key. This checks
@@ -657,6 +726,42 @@ test "general mixed native proof uses source-derived one through eight call rost
         var proof = try proveSourceBound(allocator, source, ctx.values(), source_bytes, bundle_bytes, &selected);
         defer proof.deinit();
         try std.testing.expectEqual(@as(usize, 1 + 2 * n), proof.sum_count);
+        if (n == 2 or n == 6) {
+            var timing: Timing = undefined;
+            var timed = try proveSourceBoundWithTiming(allocator, source, ctx.values(), source_bytes, bundle_bytes, &selected, &timing);
+            defer timed.deinit();
+            try std.testing.expect(timing.interaction_pow_ns > 0 and timing.fri_pow_ns > 0);
+            try std.testing.expect(timing.pcs_prove_ns >= timing.fri_pow_ns);
+            try std.testing.expect(timing.prove_body_ns >= timing.interaction_pow_ns + timing.pcs_prove_ns);
+            try std.testing.expectEqual(proof.interaction_pow_nonce, timed.interaction_pow_nonce);
+            try std.testing.expectEqual(proof.sum_count, timed.sum_count);
+            try std.testing.expectEqualSlices(QM31, proof.output_values, timed.output_values);
+            try std.testing.expectEqualSlices(QM31, proof.claimed_sums[0..proof.sum_count], timed.claimed_sums[0..timed.sum_count]);
+            try std.testing.expectEqualSlices(u8, &proof.circuit_hash, &timed.circuit_hash);
+            const plain_json = try std.json.Stringify.valueAlloc(allocator, core.proof_json.ProofView(@TypeOf(proof.stark_proof.proof)){
+                .proof = &proof.stark_proof.proof,
+            }, .{});
+            defer allocator.free(plain_json);
+            const timed_json = try std.json.Stringify.valueAlloc(allocator, core.proof_json.ProofView(@TypeOf(timed.stark_proof.proof)){
+                .proof = &timed.stark_proof.proof,
+            }, .{});
+            defer allocator.free(timed_json);
+            try std.testing.expectEqualSlices(u8, plain_json, timed_json);
+            var timed_words: [8]u32 = undefined;
+            for (timed.output_values, &timed_words) |value, *word| word.* = value.toM31Array()[0].toU32();
+            const timed_borrowed: BorrowedProof = .{
+                .output_values = timed.output_values,
+                .interaction_pow_nonce = timed.interaction_pow_nonce,
+                .claimed_sums = timed.claimed_sums,
+                .sum_count = timed.sum_count,
+                .stark_proof = &timed.stark_proof.proof,
+                .circuit_hash = timed.circuit_hash,
+            };
+            try verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, timed_words, timed_borrowed);
+            std.debug.print("S31_MIXED_TIMING_SAMPLE n={d} prove_body_ns={d} interaction_pow_ns={d} pcs_prove_ns={d} fri_pow_ns={d}\n", .{
+                n, timing.prove_body_ns, timing.interaction_pow_ns, timing.pcs_prove_ns, timing.fri_pow_ns,
+            });
+        }
         var words: [8]u32 = undefined;
         for (proof.output_values, &words) |value, *word| {
             const limbs = value.toM31Array();
