@@ -9,11 +9,12 @@ const circuit = @import("stwo_circuit_frontend");
 const air = @import("air.zig");
 const many = @import("private_many_boundary.zig");
 const preflight = @import("direct_many_preflight.zig");
+const registry = @import("direct_many_registry.zig");
 
 const DirectCircuit = circuit.common.direct_arithmetic.Circuit;
 const n_fixed = circuit.common.direct_arithmetic.N_COLUMNS;
 
-pub const SourceKind = enum(u8) { bundled_circuit, tagged_chip, tagged_bridge };
+pub const SourceKind = registry.SourceKind;
 
 pub const Slot = struct {
     kind: many.ComponentKind,
@@ -220,6 +221,7 @@ pub fn selectGeometry(
             .chip => .tagged_chip,
             .bridge => .tagged_bridge,
         };
+        try registry.requireLiveFact(wanted_source, fact);
         if (slot.kind != expected.kind or slot.source_kind != wanted_source or
             slot.call_id != expected.call_id or slot.proof_index != index or
             slot.claimed_sum_index != index or

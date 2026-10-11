@@ -74,6 +74,18 @@ fn validatePublicOutputShape(source: CircuitView) !void {
         if (address != @as(u32, @intCast(index + 2))) return error.InvalidManyPublicStatement;
 }
 
+/// Reject impossible V4 source geometry before Plan.validate allocates a
+/// producer bitmap of n_vars or direct preprocessing allocates use counts.
+/// This is a guarded-adapter resource limit; a future V4 revision should put
+/// the same check inside the public Plan API, which is in the V4 template hash.
+fn validateBoundedResourceShape(source: CircuitView) !void {
+    const rows = source.nQm31OpsRows();
+    if (rows < 16 or rows > (1 << 16) or !std.math.isPowerOfTwo(rows))
+        return error.InvalidManyCircuitRows;
+    if (source.n_vars < 11 or source.n_vars > 4 * rows + 32)
+        return error.InvalidManyCircuitVariables;
+}
+
 const max_main_width = many.circuit_main_width + 17 * many.max_calls;
 const max_interaction_width = many.circuit_interaction_width + 28 * many.max_calls;
 
@@ -225,6 +237,7 @@ pub fn proveSelectedSourceBound(
     selected: *const schedule.SelectedSchedule,
     pin: provenance.SourcePin,
 ) !Proof {
+    try validateBoundedResourceShape(source);
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();
@@ -541,6 +554,7 @@ pub fn verifySelectedSourceBoundBorrowed(
     public_words: [8]u32,
     proof: BorrowedProof,
 ) !void {
+    try validateBoundedResourceShape(source);
     try provenance.validate(selected, pin);
     var template = try air.parse(allocator, pin.air_bundle_bytes);
     defer template.deinit();
@@ -746,6 +760,37 @@ fn cloneColumns(allocator: std.mem.Allocator, source: []const ColumnEvaluation) 
     return columns;
 }
 
+test "V4 guarded adapters reject oversized circuit variables before allocation" {
+    var gates: [16]circuit.builder.circuit.BinaryGate = undefined;
+    for (&gates, 0..) |*gate, id|
+        gate.* = .{ .in0 = 0, .in1 = 1, .out = @intCast(3 + id) };
+    var source = CircuitView{ .n_vars = 1 << 30, .add = &gates, .output = &.{ 2, 3, 4, 5, 6, 7, 8, 9, 10 } };
+    var tiny_storage: [64]u8 = undefined;
+    var tiny = std.heap.FixedBufferAllocator.init(&tiny_storage);
+    var selected: schedule.SelectedSchedule = undefined;
+    const pin: provenance.SourcePin = .{
+        .source_bytes = &.{},
+        .air_bundle_bytes = &.{},
+        .direct_circuit_source_bytes = &.{},
+        .native_template_sha256 = [_]u8{0} ** 32,
+        .descriptors = &.{},
+    };
+    var unused_stark: core.proof.StarkProof(H) = undefined;
+    const borrowed: BorrowedProof = .{
+        .output_values = &.{},
+        .interaction_pow_nonce = 0,
+        .claimed_sums = [_]QM31{QM31.zero()} ** many.max_components,
+        .sum_count = 0,
+        .stark_proof = &unused_stark,
+        .circuit_hash = [_]u8{0} ** 32,
+    };
+    try std.testing.expectError(error.InvalidManyCircuitVariables, proveSelectedSourceBound(tiny.allocator(), source, &.{}, &selected, pin));
+    try std.testing.expectError(error.InvalidManyCircuitVariables, verifySelectedSourceBoundBorrowed(tiny.allocator(), source, &selected, pin, [_]u32{0} ** 8, borrowed));
+    source.add = gates[0..15];
+    try std.testing.expectError(error.InvalidManyCircuitRows, proveSelectedSourceBound(tiny.allocator(), source, &.{}, &selected, pin));
+    try std.testing.expectError(error.InvalidManyCircuitRows, verifySelectedSourceBoundBorrowed(tiny.allocator(), source, &selected, pin, [_]u32{0} ** 8, borrowed));
+}
+
 test "V4 native one-call proof binds roster transcript and public claim" {
     const allocator = std.testing.allocator;
     var ctx = try circuit.builder.Context(QM31).init(allocator, 8);
@@ -895,6 +940,13 @@ test "V4 native three-call proof uses seven ordered component sums" {
         try std.testing.expectError(error.InvalidManyLookupSum, verify(allocator, source, &bundle, pcs, request, words, &proof));
         proof.claimed_sums[index] = proof.claimed_sums[index].sub(QM31.one());
     }
+    // Global lookup closure remains zero; the per-component AIR/PCS binding
+    // must still reject a compensated chip/bridge claim rewrite.
+    proof.claimed_sums[1] = proof.claimed_sums[1].add(QM31.one());
+    proof.claimed_sums[4] = proof.claimed_sums[4].sub(QM31.one());
+    if (verify(allocator, source, &bundle, pcs, request, words, &proof)) |_| return error.AcceptedCompensatedClaimedSums else |_| {}
+    proof.claimed_sums[1] = proof.claimed_sums[1].sub(QM31.one());
+    proof.claimed_sums[4] = proof.claimed_sums[4].add(QM31.one());
     var reordered = request;
     reordered.plan.calls[0] = request.plan.calls[1];
     reordered.plan.calls[1] = request.plan.calls[0];

@@ -6,12 +6,17 @@
 const std = @import("std");
 const air = @import("air.zig");
 const schedule = @import("direct_many_schedule.zig");
+const registry = @import("direct_many_registry.zig");
 const chip = @import("tagged_many_chip.zig");
 const bridge = @import("tagged_many_bridge.zig");
 
 const Digest = [32]u8;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 pub const descriptor_version: u32 = 1;
+comptime {
+    if (descriptor_version != registry.registry_version)
+        @compileError("V4 descriptor and source-kind registry versions must advance together");
+}
 
 /// The descriptor version is separate from V4 proof bytes. New native AIRs
 /// require explicit registration and a reviewed profile/version decision.
