@@ -1361,7 +1361,9 @@ test "mixed trace audit checks reserved public and every gate row" {
     try ctx.finalize(false);
     try circuit.common.finalize.padToTargets(QM31, &ctx, .{
         .eq = 0,
-        .qm31_ops = circuit.common.finalize.paddedSize(ctx.circuit.nQm31OpsRows()),
+        // Cross the current power-of-two boundary so this audit also sees
+        // zero-multiplicity padding Gate rows.
+        .qm31_ops = circuit.common.finalize.paddedSize(ctx.circuit.nQm31OpsRows() + 1),
         .triple_xor = 0,
         .m31_to_u32 = 0,
         .blake_g_gate = 0,
@@ -1381,6 +1383,14 @@ test "mixed trace audit checks reserved public and every gate row" {
     values[address] = values[address].add(QM31.one());
     try std.testing.expectError(error.InvalidMixedTraceAuditGate, auditCircuitRows(allocator, source, values, &pp, &base, plan));
     values[address] = ctx.values()[address];
+    const padding_row = source.add.len - 1;
+    const padding_gate = source.add[padding_row];
+    try std.testing.expectEqual(@as(u32, 1), padding_gate.in0);
+    try std.testing.expectEqual(@as(u32, 1), padding_gate.in1);
+    try std.testing.expectEqual(@as(u32, 0), pp.columns[7].values[padding_row].toU32());
+    values[padding_gate.out] = values[padding_gate.out].add(QM31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditGate, auditCircuitRows(allocator, source, values, &pp, &base, plan));
+    values[padding_gate.out] = ctx.values()[padding_gate.out];
     const original_main = base.columns[0].values[0];
     @constCast(base.columns[0].values)[0] = original_main.add(M31.one());
     try std.testing.expectError(error.InvalidMixedTraceAuditMain, auditCircuitRows(allocator, source, values, &pp, &base, plan));
