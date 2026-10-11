@@ -20,6 +20,7 @@ pub const private_many_boundary = @import("private_many_boundary.zig");
 pub const direct_many_preflight = @import("direct_many_preflight.zig");
 pub const direct_many_registry = @import("direct_many_registry.zig");
 pub const direct_many_plan_admission = @import("direct_many_plan_admission.zig");
+pub const direct_mixed_admission = @import("direct_mixed_admission.zig");
 pub const direct_many_schedule = @import("direct_many_schedule.zig");
 pub const direct_many_provenance = @import("direct_many_provenance.zig");
 pub const tagged_many_chip = @import("tagged_many_chip.zig");
@@ -64,6 +65,7 @@ test {
     _ = direct_many_preflight;
     _ = direct_many_registry;
     _ = direct_many_plan_admission;
+    _ = direct_mixed_admission;
     _ = direct_many_schedule;
     _ = direct_many_provenance;
     _ = tagged_many_chip;
