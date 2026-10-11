@@ -110,6 +110,19 @@ pub const Timing = struct {
     fri_pow_ns: u64,
 };
 
+/// Explicit witness-sidecar audit of a *verified* proof. The three roots are
+/// recomputed from the supplied full witness, then compared to the roots in
+/// the verified PCS proof. This is deliberately opt-in and not a succinct
+/// verifier claim that a proof reveals its committed polynomial evaluations.
+pub const TraceAudit = struct {
+    fixed_root: [32]u8,
+    main_root: [32]u8,
+    interaction_root: [32]u8,
+    circuit_rows: usize,
+    chip_rows: usize,
+    bridge_rows: usize,
+};
+
 const ChipInteraction = union(enum) {
     pair: pair_chip.Interaction,
     many: many_chip.Interaction,
@@ -310,6 +323,296 @@ fn checkRuntimeHandles(comptime T: type, allocator: std.mem.Allocator, handles: 
         if (indices.len != slot.preprocessed_count) return error.InvalidMixedRuntimeRoster;
         for (indices, slot.preprocessed_indices[0..slot.preprocessed_count]) |actual, expected|
             if (actual != expected) return error.InvalidMixedRuntimeRoster;
+    }
+}
+
+fn auditCircuitRows(
+    allocator: std.mem.Allocator,
+    source: CircuitView,
+    values: []const QM31,
+    pp: *const direct_pp.Circuit,
+    base: *const direct_trace.Base,
+    plan: many.Plan,
+) !usize {
+    // The selected S31 direct profile has no permutation component. Refuse a
+    // future permutation-bearing source until its row semantics are audited.
+    if (source.nPermutations() != 0) return error.UnsupportedMixedTraceAuditPermutation;
+    const rows = source.nQm31OpsRows();
+    if (values.len != source.n_vars or rows != pp.first_permutation_row or
+        pp.n_outputs != 8 or base.columns.len != 12 or
+        rows != (@as(usize, 1) << @intCast(base.log_size)))
+        return error.InvalidMixedTraceAuditShape;
+    if (!values[0].eql(QM31.zero()) or !values[1].eql(QM31.one()) or
+        !values[2].eql(circuit.witness.trace.U_VALUE))
+        return error.InvalidMixedTraceAuditReserved;
+    const uses = try source.computeUses(allocator);
+    defer allocator.free(uses);
+    const gate_balance = try allocator.alloc(i64, values.len);
+    defer allocator.free(gate_balance);
+    @memset(gate_balance, 0);
+    for (plan.callSlice()) |call| for (call.input ++ call.output) |address| {
+        if (address >= uses.len) return error.InvalidMixedTraceAuditAddress;
+        try circuit.common.preprocessed.addCanonicalMultiplicity(&uses[address], 1);
+    };
+    var fixed: [direct_pp.N_COLUMNS][]const M31 = undefined;
+    for (circuit.common.preprocessed.QM31_OPS_COLUMN_IDS, &fixed) |id, *slot| {
+        slot.* = pp.columnValues(id) orelse return error.InvalidMixedTraceAuditFixed;
+        if (slot.*.len != rows) return error.InvalidMixedTraceAuditShape;
+    }
+    for (base.columns) |column|
+        if (column.log_size != base.log_size or column.values.len != rows)
+            return error.InvalidMixedTraceAuditShape;
+    var row: usize = 0;
+    inline for (.{ source.add, source.sub, source.mul, source.pointwise_mul }, 0..) |gates, opcode| {
+        for (gates) |gate| {
+            if (gate.in0 >= values.len or gate.in1 >= values.len or gate.out >= values.len)
+                return error.InvalidMixedTraceAuditAddress;
+            for (0..4) |flag|
+                if (fixed[flag][row].toU32() != @intFromBool(flag == opcode))
+                    return error.InvalidMixedTraceAuditFixed;
+            const expected = [4]u32{ gate.in0, gate.in1, gate.out, uses[gate.out] };
+            for (expected, 4..) |word, column|
+                if (fixed[column][row].toU32() != word)
+                    return error.InvalidMixedTraceAuditFixed;
+            const actual = values[gate.out];
+            const computed = switch (opcode) {
+                0 => values[gate.in0].add(values[gate.in1]),
+                1 => values[gate.in0].sub(values[gate.in1]),
+                2 => values[gate.in0].mul(values[gate.in1]),
+                3 => core.fields.qm31_pointwise.pointwiseMul(values[gate.in0], values[gate.in1]),
+                else => unreachable,
+            };
+            if (!actual.eql(computed)) return error.InvalidMixedTraceAuditGate;
+            // Compare a bag of (address, value) Gate events. Each base row is
+            // already tied to values[address], so address is a canonical bag
+            // key here; no global concatenation order is assumed.
+            gate_balance[gate.in0] += 1;
+            gate_balance[gate.in1] += 1;
+            gate_balance[gate.out] -= fixed[7][row].toU32();
+            const operands = [3]QM31{ values[gate.in0], values[gate.in1], actual };
+            for (operands, 0..) |operand, part| for (operand.toM31Array(), 0..) |limb, lane| {
+                if (!base.columns[4 * part + lane].values[row].eql(limb))
+                    return error.InvalidMixedTraceAuditMain;
+            };
+            row += 1;
+        }
+    }
+    if (row != rows or base.output_values.len != 8) return error.InvalidMixedTraceAuditShape;
+    for (base.output_values, values[3..11]) |output, word|
+        if (!output.eql(word)) return error.InvalidMixedTraceAuditPublic;
+    // The public feeder consumes u and all eight output words; each bridge
+    // consumes its eight source-owned endpoint words once (1/16 per row).
+    for (source.output) |address| {
+        if (address >= gate_balance.len) return error.InvalidMixedTraceAuditAddress;
+        gate_balance[address] += 1;
+    }
+    for (plan.callSlice()) |call| for (call.input ++ call.output) |address| {
+        if (address >= gate_balance.len) return error.InvalidMixedTraceAuditAddress;
+        gate_balance[address] += 1;
+    };
+    for (gate_balance) |balance|
+        if (balance != 0) return error.InvalidMixedTraceAuditGateBag;
+    return rows;
+}
+
+fn auditChipBridgeRows(
+    plan: many.Plan,
+    states: [max_calls]many.States,
+    chips: []const many_chip.Base,
+    bridges: []const BridgeBase,
+) !struct { chip: usize, bridge: usize } {
+    var chip_rows: usize = 0;
+    var bridge_rows: usize = 0;
+    for (plan.callSlice(), states[0..plan.count], chips, bridges) |call, state, chip_base, bridge_base| {
+        if (chip_base.columns.len != 9) return error.InvalidMixedTraceAuditChip;
+        const log_size = try @import("repeated_step_chip.zig").validateRounds(call.rounds);
+        for (chip_base.columns) |column|
+            if (column.log_size != log_size or column.values.len != call.rounds)
+                return error.InvalidMixedTraceAuditChip;
+        var words = state.input;
+        for (0..call.rounds) |step| {
+            const row = @import("repeated_step_chip.zig").storageIndex(step, log_size);
+            if (chip_base.columns[0].values.len != call.rounds or
+                chip_base.columns[0].values[row].toU32() != step)
+                return error.InvalidMixedTraceAuditChip;
+            for (&words, 0..) |*word, lane| {
+                if (chip_base.columns[1 + lane].values.len != call.rounds or
+                    chip_base.columns[5 + lane].values.len != call.rounds or
+                    !chip_base.columns[1 + lane].values[row].eql(word.*))
+                    return error.InvalidMixedTraceAuditChip;
+                word.* = word.*.mul(word.*).add(call.constant);
+                if (!chip_base.columns[5 + lane].values[row].eql(word.*))
+                    return error.InvalidMixedTraceAuditChip;
+            }
+        }
+        if (!std.meta.eql(words, state.output) or !std.meta.eql(chip_base.final, state.output))
+            return error.InvalidMixedTraceAuditChip;
+        // For each call, a tagged chip row's negative `(id, step+1, out)`
+        // event must equal the next row's positive `(id, step+1, in)` event.
+        // The bridge cancels the two remaining endpoints below. This is a
+        // per-call multiset check, not a global sequence comparison.
+        for (1..call.rounds) |step| {
+            const previous_row = @import("repeated_step_chip.zig").storageIndex(step - 1, log_size);
+            const current_row = @import("repeated_step_chip.zig").storageIndex(step, log_size);
+            for (0..4) |lane|
+                if (!chip_base.columns[5 + lane].values[previous_row].eql(chip_base.columns[1 + lane].values[current_row]))
+                    return error.InvalidMixedTraceAuditChipBag;
+        }
+        const columns = bridge_base.columns();
+        if (columns.len != 8) return error.InvalidMixedTraceAuditBridge;
+        const endpoints = state.input ++ state.output;
+        for (columns, endpoints) |column, expected| {
+            if (column.log_size != many.bridge_log_size or column.values.len != pair_bridge.rows)
+                return error.InvalidMixedTraceAuditBridge;
+            for (column.values) |actual|
+                if (!actual.eql(expected)) return error.InvalidMixedTraceAuditBridge;
+        }
+        chip_rows += call.rounds;
+        bridge_rows += pair_bridge.rows;
+    }
+    return .{ .chip = chip_rows, .bridge = bridge_rows };
+}
+
+const AuditFraction = prover.air.logup_columns.Fraction;
+
+fn secureColumn(columns: []const ColumnEvaluation, group: usize, row: usize) QM31 {
+    const offset = 4 * group;
+    return QM31.fromM31(
+        columns[offset].values[row],
+        columns[offset + 1].values[row],
+        columns[offset + 2].values[row],
+        columns[offset + 3].values[row],
+    );
+}
+
+/// Audit every LogUp row in the same bit-reversed circle-domain storage as
+/// the committed trace. Earlier columns are per-row fraction prefixes; the
+/// final one is a coset-order prefix with claimed_sum / rows subtracted.
+/// Explicit inversions reject poles instead of silently accepting a fraction.
+fn auditLogupRows(
+    columns: []const ColumnEvaluation,
+    log_size: u32,
+    n_fractions: usize,
+    claimed_sum: QM31,
+    context: anytype,
+    comptime fill: fn (@TypeOf(context), usize, []AuditFraction) anyerror!void,
+) !void {
+    if (n_fractions == 0 or n_fractions > 5 or columns.len != 4 * n_fractions or log_size >= @bitSizeOf(usize))
+        return error.InvalidMixedTraceAuditInteractionShape;
+    const rows = @as(usize, 1) << @intCast(log_size);
+    for (columns) |column|
+        if (column.log_size != log_size or column.values.len != rows)
+            return error.InvalidMixedTraceAuditInteractionShape;
+    const shift = try claimed_sum.divM31(M31.fromU64(rows));
+    var total = QM31.zero();
+    for (0..rows) |row| {
+        var fractions: [5]AuditFraction = undefined;
+        try fill(context, row, fractions[0..n_fractions]);
+        var cumulative = QM31.zero();
+        for (fractions[0..n_fractions], 0..) |fraction, index| {
+            if (fraction.denominator.isZero()) return error.MixedTraceAuditDenominatorPole;
+            cumulative = cumulative.add(fraction.numerator.mul(try fraction.denominator.inv()));
+            if (index + 1 < n_fractions and !secureColumn(columns, index, row).eql(cumulative))
+                return error.InvalidMixedTraceAuditInteraction;
+        }
+        total = total.add(cumulative);
+        const previous_row = core.utils.previousBitReversedCircleDomainIndex(row, log_size, log_size);
+        const current = secureColumn(columns, n_fractions - 1, row);
+        const previous = secureColumn(columns, n_fractions - 1, previous_row);
+        if (!current.sub(previous).add(shift).eql(cumulative))
+            return error.InvalidMixedTraceAuditInteraction;
+    }
+    if (!total.eql(claimed_sum)) return error.InvalidMixedTraceAuditClaimedSum;
+}
+
+const CircuitFractions = struct {
+    base: []const ColumnEvaluation,
+    fixed: [direct_pp.N_COLUMNS][]const M31,
+    elements: circuit.witness.trace.LookupElements,
+
+    fn fill(self: @This(), row: usize, out: []AuditFraction) !void {
+        if (out.len != 2) return error.InvalidMixedTraceAuditInteractionShape;
+        var main: [12]M31 = undefined;
+        for (self.base, &main) |column, *word| word.* = column.values[row];
+        const lookups = circuit.witness.components.qm31_ops.lookups(&main, .{
+            .in0 = self.fixed[4][row],
+            .in1 = self.fixed[5][row],
+            .out = self.fixed[6][row],
+            .mults = self.fixed[7][row],
+        });
+        const d0 = self.elements.combine(lookups[0].values());
+        const d1 = self.elements.combine(lookups[1].values());
+        const d2 = self.elements.combine(lookups[2].values());
+        out[0] = .{
+            .numerator = d1.mulM31(lookups[0].numerator).add(d0.mulM31(lookups[1].numerator)),
+            .denominator = d0.mul(d1),
+        };
+        out[1] = .{ .numerator = QM31.fromBase(lookups[2].numerator), .denominator = d2 };
+    }
+};
+
+const ChipFractions = struct {
+    base: []const ColumnEvaluation,
+    call: many.Call,
+    elements: many.Elements,
+
+    fn fill(self: @This(), row: usize, out: []AuditFraction) !void {
+        if (out.len != 2) return error.InvalidMixedTraceAuditInteractionShape;
+        const step = self.base[0].values[row].toU32();
+        if (step >= self.call.rounds) return error.InvalidMixedTraceAuditChip;
+        var before: [4]M31 = undefined;
+        var after: [4]M31 = undefined;
+        for (0..4) |lane| {
+            before[lane] = self.base[1 + lane].values[row];
+            after[lane] = self.base[5 + lane].values[row];
+        }
+        out[0] = .{ .numerator = QM31.one(), .denominator = self.elements.combine(many.chipTuple(self.call.call_id, step, before)) };
+        out[1] = .{ .numerator = QM31.one().neg(), .denominator = self.elements.combine(many.chipTuple(self.call.call_id, step + 1, after)) };
+    }
+};
+
+const BridgeFractions = struct {
+    base: []const ColumnEvaluation,
+    call: many.Call,
+    elements: many.Elements,
+
+    fn fill(self: @This(), row: usize, out: []AuditFraction) !void {
+        if (out.len != 5) return error.InvalidMixedTraceAuditInteractionShape;
+        const inv_rows = try QM31.fromBase(M31.fromCanonical(pair_bridge.rows)).inv();
+        var words: [8]M31 = undefined;
+        for (self.base, &words) |column, *word| word.* = column.values[row];
+        const addresses = self.call.input ++ self.call.output;
+        for (0..4) |slot| {
+            const a = 2 * slot;
+            const d0 = self.elements.combineGate(many.gateTuple(addresses[a], words[a]));
+            const d1 = self.elements.combineGate(many.gateTuple(addresses[a + 1], words[a + 1]));
+            out[slot] = .{ .numerator = d0.add(d1).mul(inv_rows), .denominator = d0.mul(d1) };
+        }
+        const first = self.elements.combine(many.chipTuple(self.call.call_id, 0, words[0..4].*));
+        const last = self.elements.combine(many.chipTuple(self.call.call_id, self.call.rounds, words[4..8].*));
+        out[4] = .{ .numerator = first.sub(last).mul(inv_rows), .denominator = first.mul(last) };
+    }
+};
+
+fn auditInteractionRows(
+    pp: *const direct_pp.Circuit,
+    base: *const direct_trace.Base,
+    interaction: *const direct_trace.Interaction,
+    plan: many.Plan,
+    chips: []const many_chip.Base,
+    bridges: []const BridgeBase,
+    chip_interactions: []const ChipInteraction,
+    bridge_interactions: []const BridgeInteraction,
+    z: QM31,
+    alpha: QM31,
+) !void {
+    var fixed: [direct_pp.N_COLUMNS][]const M31 = undefined;
+    for (circuit.common.preprocessed.QM31_OPS_COLUMN_IDS, &fixed) |id, *slot|
+        slot.* = pp.columnValues(id) orelse return error.InvalidMixedTraceAuditFixed;
+    try auditLogupRows(interaction.columns, base.log_size, 2, interaction.claimed_sum, CircuitFractions{ .base = base.columns, .fixed = fixed, .elements = .init(z, alpha) }, CircuitFractions.fill);
+    for (plan.callSlice(), chips, bridges, chip_interactions, bridge_interactions) |call, chip_base, bridge_base, chip_trace, bridge_trace| {
+        try auditLogupRows(chip_trace.columns(), chip_base.columns[0].log_size, 2, chip_trace.sum(), ChipFractions{ .base = chip_base.columns, .call = call, .elements = .init(z, alpha) }, ChipFractions.fill);
+        try auditLogupRows(bridge_trace.columns(), pair_bridge.log_size, 5, bridge_trace.sum(), BridgeFractions{ .base = bridge_base.columns(), .call = call, .elements = .init(z, alpha) }, BridgeFractions.fill);
     }
 }
 
@@ -657,6 +960,142 @@ pub fn verifySourceBoundBorrowed(
     defer capture.deinit(allocator);
 }
 
+/// Verify the STARK first, then audit a separately supplied complete witness
+/// against its authenticated fixed/main/interaction Merkle roots. Rebuilding
+/// roots is expensive and exposes the witness to this caller; ordinary proof
+/// admission never invokes it. Equality is a binding claim under the hash/PCS
+/// assumptions, not extraction of a trace from succinct proof bytes.
+pub fn auditVerifiedSourceBoundWitness(
+    allocator: std.mem.Allocator,
+    source: CircuitView,
+    values: []const QM31,
+    source_bytes: []const u8,
+    air_bytes: []const u8,
+    selected: *const Selected,
+    public_words: [8]u32,
+    proof: BorrowedProof,
+) !TraceAudit {
+    try verifySourceBoundBorrowed(allocator, source, source_bytes, air_bytes, selected, public_words, proof);
+    var pp = try plan_admission.BoundedPlan.fromLegacy(selected.plan).preprocessed(allocator, source);
+    defer pp.deinit(allocator);
+    var template = try air.parse(allocator, air_bytes);
+    defer template.deinit();
+    try validateSourceAndGeometry(allocator, &pp, &template, selected, source_bytes, air_bytes);
+    const states = try selected.plan.extract(values);
+    var base = try direct_trace.writeBase(allocator, values, &pp);
+    defer base.deinit();
+    const circuit_rows = try auditCircuitRows(allocator, source, values, &pp, &base, selected.plan);
+    for (base.output_values, public_words) |actual, expected| {
+        if (!actual.eql(QM31.fromBase(M31.fromCanonical(expected))))
+            return error.InvalidMixedTraceAuditPublic;
+    }
+    var chip_base: [max_calls]many_chip.Base = undefined;
+    var bridge_base: [max_calls]BridgeBase = undefined;
+    var chips_ready: usize = 0;
+    var bridges_ready: usize = 0;
+    defer for (chip_base[0..chips_ready]) |*item| item.deinit();
+    defer for (bridge_base[0..bridges_ready]) |*item| item.deinit();
+    for (selected.plan.callSlice(), states[0..selected.plan.count], 0..) |call, state, id| {
+        chip_base[id] = if (id < 2)
+            try pair_chip.writeBase(allocator, state.input, call.constant, call.rounds)
+        else
+            try many_chip.writeBase(allocator, state.input, call.constant, call.rounds);
+        chips_ready += 1;
+        bridge_base[id] = if (id < 2)
+            .{ .pair = try pair_bridge.writeBase(allocator, values, call) }
+        else
+            .{ .many = try many_bridge.writeBase(allocator, values, call) };
+        bridges_ready += 1;
+    }
+    const chip_bridge_rows = try auditChipBridgeRows(
+        selected.plan,
+        states,
+        chip_base[0..selected.plan.count],
+        bridge_base[0..selected.plan.count],
+    );
+    const roots = proof.stark_proof.commitment_scheme_proof.commitments.items;
+    if (roots.len != 4) return error.InvalidMixedTraceAuditProofRoots;
+    const pcs = selected.geometry.pcs;
+    var scheme = try Engine.initRevision(allocator, pcs);
+    defer Engine.deinit(&scheme, allocator);
+    scheme.setStorePolynomialsCoefficients();
+    var channel = Channel{};
+    mixProfile(&channel, selected);
+    core.channel.lookup_transcript.mixChannelSalt(&channel, 0);
+    pcs.fri_config.mixInto(&channel);
+    var pp_views: [direct_pp.N_COLUMNS]ColumnEvaluation = undefined;
+    for (pp.columns, &pp_views) |entry, *view| view.* = .{ .log_size = entry.logSize(), .values = entry.values };
+    try commit(&scheme, allocator, &pp_views, &channel);
+    const fixed_root = scheme.trees.items[0].commitment.root();
+    if (!std.meta.eql(fixed_root, selected.fixed_root) or !std.meta.eql(fixed_root, roots[0]))
+        return error.InvalidMixedTraceAuditFixedRoot;
+    MC.mixRoot(&channel, selected.circuitIdentity());
+    channel.mixFelts(base.output_values);
+    var main_views: [mixed.max_tree_width]ColumnEvaluation = undefined;
+    const main_width: usize = selected.geometry.tree_columns[1];
+    try selectedColumns(main_views[0..main_width], selected, base.columns, chip_base[0..selected.plan.count], bridge_base[0..selected.plan.count], true);
+    try commit(&scheme, allocator, main_views[0..main_width], &channel);
+    const main_root = scheme.trees.items[1].commitment.root();
+    if (!std.meta.eql(main_root, roots[1])) return error.InvalidMixedTraceAuditMainRoot;
+    if (!channel.verifyPowNonce(circuit.common.component_list.INTERACTION_POW_BITS, proof.interaction_pow_nonce))
+        return error.InvalidMixedTraceAuditNonce;
+    channel.mixU64(proof.interaction_pow_nonce);
+    const lookup = try core.channel.lookup_transcript.drawLookupElements(allocator, &channel);
+    var circuit_interaction = try direct_trace.writeInteraction(allocator, &base, &pp, lookup.z, lookup.alpha);
+    defer circuit_interaction.deinit();
+    var chip_interaction: [max_calls]ChipInteraction = undefined;
+    var bridge_interaction: [max_calls]BridgeInteraction = undefined;
+    var chip_interactions_ready: usize = 0;
+    var bridge_interactions_ready: usize = 0;
+    defer for (chip_interaction[0..chip_interactions_ready]) |*item| item.deinit();
+    defer for (bridge_interaction[0..bridge_interactions_ready]) |*item| item.deinit();
+    for (selected.plan.callSlice(), 0..) |call, id| {
+        chip_interaction[id] = if (id < 2)
+            .{ .pair = try pair_chip.writeInteraction(allocator, chip_base[id].columns, call.call_id, lookup.z, lookup.alpha) }
+        else
+            .{ .many = try many_chip.writeInteraction(allocator, chip_base[id].columns, call.call_id, lookup.z, lookup.alpha) };
+        chip_interactions_ready += 1;
+        bridge_interaction[id] = if (id < 2)
+            .{ .pair = try pair_bridge.writeInteraction(allocator, bridge_base[id].columns(), call, lookup.z, lookup.alpha) }
+        else
+            .{ .many = try many_bridge.writeInteraction(allocator, bridge_base[id].columns(), call, lookup.z, lookup.alpha) };
+        bridge_interactions_ready += 1;
+    }
+    try auditInteractionRows(
+        &pp,
+        &base,
+        &circuit_interaction,
+        selected.plan,
+        chip_base[0..selected.plan.count],
+        bridge_base[0..selected.plan.count],
+        chip_interaction[0..selected.plan.count],
+        bridge_interaction[0..selected.plan.count],
+        lookup.z,
+        lookup.alpha,
+    );
+    const sums = try selectedSums(selected, circuit_interaction.claimed_sum, &chip_interaction, &bridge_interaction);
+    for (sums[0..selected.geometry.slot_count], proof.claimed_sums[0..selected.geometry.slot_count]) |actual, claimed|
+        if (!actual.eql(claimed)) return error.InvalidMixedTraceAuditClaimedSum;
+    var closure = try direct_trace.lookupSum(base.output_values, sums[0], lookup.z, lookup.alpha);
+    for (sums[1..selected.geometry.slot_count]) |sum| closure = closure.add(sum);
+    if (!closure.isZero()) return error.InvalidMixedTraceAuditLookup;
+    core.channel.lookup_transcript.mixInteractionClaim(&channel, sums[0..selected.geometry.slot_count]);
+    var interaction_views: [mixed.max_tree_width]ColumnEvaluation = undefined;
+    const interaction_width: usize = selected.geometry.tree_columns[2];
+    try selectedColumns(interaction_views[0..interaction_width], selected, circuit_interaction.columns, chip_interaction[0..selected.plan.count], bridge_interaction[0..selected.plan.count], false);
+    try commit(&scheme, allocator, interaction_views[0..interaction_width], &channel);
+    const interaction_root = scheme.trees.items[2].commitment.root();
+    if (!std.meta.eql(interaction_root, roots[2])) return error.InvalidMixedTraceAuditInteractionRoot;
+    return .{
+        .fixed_root = fixed_root,
+        .main_root = main_root,
+        .interaction_root = interaction_root,
+        .circuit_rows = circuit_rows,
+        .chip_rows = chip_bridge_rows.chip,
+        .bridge_rows = chip_bridge_rows.bridge,
+    };
+}
+
 test "general mixed native proof uses source-derived one through eight call rosters" {
     const allocator = std.heap.smp_allocator;
     inline for (1..max_calls + 1) |n| {
@@ -805,4 +1244,149 @@ test "general mixed native proof uses source-derived one through eight call rost
             return error.AcceptedChangedGeneralMixedRole;
         } else |_| {}
     }
+}
+
+test "mixed trace audit rejects interaction and bridge mutations" {
+    const allocator = std.testing.allocator;
+    const Context = struct {
+        pole: bool = false,
+        fn fill(self: @This(), row: usize, out: []AuditFraction) !void {
+            out[0] = .{
+                .numerator = QM31.fromBase(M31.fromU64(row + 1)),
+                .denominator = if (self.pole and row == 3) QM31.zero() else QM31.fromBase(M31.fromCanonical(2)),
+            };
+            out[1] = .{
+                .numerator = QM31.fromBase(M31.fromU64(row + 3)),
+                .denominator = QM31.fromBase(M31.fromCanonical(7)),
+            };
+        }
+    };
+    const context = Context{};
+    const logup = try prover.air.logup_columns.build(allocator, 4, 2, context, Context.fill);
+    defer {
+        for (logup.columns) |column| allocator.free(column.values);
+        allocator.free(logup.columns);
+    }
+    try auditLogupRows(logup.columns, 4, 2, logup.claimed_sum, context, Context.fill);
+    const row = @import("repeated_step_chip.zig").storageIndex(3, 4);
+    try std.testing.expect(row != 3);
+    const old_logup = logup.columns[4].values[row];
+    @constCast(logup.columns[4].values)[row] = old_logup.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditInteraction, auditLogupRows(logup.columns, 4, 2, logup.claimed_sum, context, Context.fill));
+    @constCast(logup.columns[4].values)[row] = old_logup;
+    try std.testing.expectError(error.MixedTraceAuditDenominatorPole, auditLogupRows(logup.columns, 4, 2, logup.claimed_sum, Context{ .pole = true }, Context.fill));
+
+    const initial = [4]M31{ M31.fromCanonical(1), M31.fromCanonical(2), M31.fromCanonical(3), M31.fromCanonical(4) };
+    const constant = M31.fromCanonical(13);
+    const final = try @import("repeated_step_chip.zig").direct(initial, constant, 16);
+    var plan: many.Plan = .{ .count = 1 };
+    plan.calls[0] = .{
+        .call_id = 0,
+        .rounds = 16,
+        .constant = constant,
+        .input = .{ 3, 4, 5, 6 },
+        .output = .{ 7, 8, 9, 10 },
+    };
+    var values = [_]QM31{QM31.zero()} ** 11;
+    for (initial, plan.calls[0].input) |value, address| values[address] = QM31.fromBase(value);
+    for (final, plan.calls[0].output) |value, address| values[address] = QM31.fromBase(value);
+    const states = try plan.extract(&values);
+    var chip_base = try pair_chip.writeBase(allocator, initial, constant, 16);
+    defer chip_base.deinit();
+    var bridge_base: BridgeBase = .{ .pair = try pair_bridge.writeBase(allocator, &values, plan.calls[0]) };
+    defer bridge_base.deinit();
+    try std.testing.expectEqual(@as(usize, 16), (try auditChipBridgeRows(plan, states, (&chip_base)[0..1], (&bridge_base)[0..1])).chip);
+    const old_chip = chip_base.columns[1].values[row];
+    @constCast(chip_base.columns[1].values)[row] = old_chip.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditChip, auditChipBridgeRows(plan, states, (&chip_base)[0..1], (&bridge_base)[0..1]));
+    @constCast(chip_base.columns[1].values)[row] = old_chip;
+    const old_chip_log = chip_base.columns[8].log_size;
+    chip_base.columns[8].log_size = old_chip_log + 1;
+    try std.testing.expectError(error.InvalidMixedTraceAuditChip, auditChipBridgeRows(plan, states, (&chip_base)[0..1], (&bridge_base)[0..1]));
+    chip_base.columns[8].log_size = old_chip_log;
+    const bridge_columns = bridge_base.columns();
+    const old_bridge = bridge_columns[0].values[1];
+    @constCast(bridge_columns[0].values)[1] = old_bridge.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditBridge, auditChipBridgeRows(plan, states, (&chip_base)[0..1], (&bridge_base)[0..1]));
+    @constCast(bridge_columns[0].values)[1] = old_bridge;
+    const z = QM31.fromU32Unchecked(17, 2, 3, 5);
+    const alpha = QM31.fromU32Unchecked(11, 7, 13, 19);
+    var chip_interaction = try pair_chip.writeInteraction(allocator, chip_base.columns, 0, z, alpha);
+    defer chip_interaction.deinit();
+    var bridge_interaction = try pair_bridge.writeInteraction(allocator, bridge_columns, plan.calls[0], z, alpha);
+    defer bridge_interaction.deinit();
+    const chip_context = ChipFractions{ .base = chip_base.columns, .call = plan.calls[0], .elements = .init(z, alpha) };
+    const bridge_context = BridgeFractions{ .base = bridge_columns, .call = plan.calls[0], .elements = .init(z, alpha) };
+    try auditLogupRows(chip_interaction.columns, 4, 2, chip_interaction.claimed_sum, chip_context, ChipFractions.fill);
+    try auditLogupRows(bridge_interaction.columns, 4, 5, bridge_interaction.claimed_sum, bridge_context, BridgeFractions.fill);
+    const old_chip_interaction = chip_interaction.columns[0].values[3];
+    @constCast(chip_interaction.columns[0].values)[3] = old_chip_interaction.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditInteraction, auditLogupRows(chip_interaction.columns, 4, 2, chip_interaction.claimed_sum, chip_context, ChipFractions.fill));
+    @constCast(chip_interaction.columns[0].values)[3] = old_chip_interaction;
+    const old_bridge_interaction = bridge_interaction.columns[8].values[1];
+    @constCast(bridge_interaction.columns[8].values)[1] = old_bridge_interaction.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditInteraction, auditLogupRows(bridge_interaction.columns, 4, 5, bridge_interaction.claimed_sum, bridge_context, BridgeFractions.fill));
+    @constCast(bridge_interaction.columns[8].values)[1] = old_bridge_interaction;
+}
+
+test "mixed trace audit checks reserved public and every gate row" {
+    const allocator = std.testing.allocator;
+    var ctx = try circuit.builder.Context(QM31).init(allocator, 8);
+    defer ctx.deinit();
+    const initial = [4]M31{ M31.fromCanonical(1), M31.fromCanonical(2), M31.fromCanonical(3), M31.fromCanonical(4) };
+    const constant = M31.fromCanonical(13);
+    const final = try @import("repeated_step_chip.zig").direct(initial, constant, 16);
+    var plan: many.Plan = .{ .count = 1 };
+    plan.calls[0] = .{
+        .call_id = 0,
+        .rounds = 16,
+        .constant = constant,
+        .input = undefined,
+        .output = undefined,
+    };
+    var inputs: [4]circuit.builder.Var = undefined;
+    var results: [4]circuit.builder.Var = undefined;
+    for (0..4) |lane| {
+        inputs[lane] = try ctx.guessM31(QM31.fromBase(initial[lane]));
+        results[lane] = try ctx.guessM31(QM31.fromBase(final[lane]));
+        plan.calls[0].input[lane] = inputs[lane].idx;
+        plan.calls[0].output[lane] = results[lane].idx;
+    }
+    var outputs: [8]circuit.builder.Var = undefined;
+    for (0..4) |lane| {
+        outputs[lane] = try ctx.add(inputs[lane], results[lane]);
+        outputs[4 + lane] = try ctx.mul(inputs[lane], results[lane]);
+    }
+    try ctx.setOutputs(&outputs);
+    try ctx.finalize(false);
+    try circuit.common.finalize.padToTargets(QM31, &ctx, .{
+        .eq = 0,
+        .qm31_ops = circuit.common.finalize.paddedSize(ctx.circuit.nQm31OpsRows()),
+        .triple_xor = 0,
+        .m31_to_u32 = 0,
+        .blake_g_gate = 0,
+    });
+    const source = CircuitView.fromBuilder(&ctx.circuit);
+    var pp = try plan.preprocessed(allocator, source);
+    defer pp.deinit(allocator);
+    var base = try direct_trace.writeBase(allocator, ctx.values(), &pp);
+    defer base.deinit();
+    try std.testing.expectEqual(source.nQm31OpsRows(), try auditCircuitRows(allocator, source, ctx.values(), &pp, &base, plan));
+    const values = try allocator.dupe(QM31, ctx.values());
+    defer allocator.free(values);
+    values[2] = QM31.zero();
+    try std.testing.expectError(error.InvalidMixedTraceAuditReserved, auditCircuitRows(allocator, source, values, &pp, &base, plan));
+    values[2] = ctx.values()[2];
+    const address = source.add[0].out;
+    values[address] = values[address].add(QM31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditGate, auditCircuitRows(allocator, source, values, &pp, &base, plan));
+    values[address] = ctx.values()[address];
+    const original_main = base.columns[0].values[0];
+    @constCast(base.columns[0].values)[0] = original_main.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditMain, auditCircuitRows(allocator, source, values, &pp, &base, plan));
+    @constCast(base.columns[0].values)[0] = original_main;
+    const original_mult = pp.columns[7].values[0];
+    pp.columns[7].values[0] = original_mult.add(M31.one());
+    try std.testing.expectError(error.InvalidMixedTraceAuditFixed, auditCircuitRows(allocator, source, values, &pp, &base, plan));
+    pp.columns[7].values[0] = original_mult;
 }
