@@ -462,6 +462,11 @@ pub fn proveSourceBound(
     };
 }
 
+/// Caller-scoped native adapter, not a standalone verifier key. This checks
+/// the selected circuit geometry against the supplied circuit/source bytes,
+/// but only the S31 source-embedded wrapper derives the manifest digest and
+/// public words from authoritative source. Do not admit external proof bytes
+/// through a caller-selected `Selected` value.
 pub fn verifySourceBoundBorrowed(
     allocator: std.mem.Allocator,
     source: CircuitView,
