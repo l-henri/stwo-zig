@@ -134,6 +134,7 @@ pub const steps = [_]Step{
     .{ .name = "test-cairo-metal-codegen", .description = "Test typed Metal composition generation and fusion", .scope = .cairo_metal },
     .{ .name = "test-cairo-metal-oracle", .description = "Require exact Cairo CPU/Metal parity and official Rust acceptance", .scope = .cairo_metal },
     .{ .name = "test-cairo-frontend", .description = "Run focused backend-neutral Cairo conformance tests", .scope = .compatibility_tools },
+    .{ .name = "test-cairo-resident-gate-oods", .description = "Compare selected Gate resident bytecode against independent QM31 vectors", .scope = .compatibility_tools },
     .{ .name = "test-cairo-cpu-air", .description = "Run Cairo CPU AIR integration tests", .scope = .compatibility_tools },
     .{ .name = "test-cairo-cpu-proof", .description = "Run the complete official Cairo CPU proof gate", .scope = .compatibility_tools },
     .{ .name = "test-cairo-leaf-proof", .description = "R10b/R10c: the Cairo leaf lane against proving@5a7c5ed preprocessed roots and prove_cairo checkpoints", .scope = .compatibility_tools },
