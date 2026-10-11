@@ -560,6 +560,7 @@
           "zig",
           "build",
           "test-cairo-frontend",
+          "test-cairo-resident-gate-oods",
           "test-cairo-cpu-air",
           "test-cairo-cpu-proof",
           "-Doptimize=ReleaseFast",
