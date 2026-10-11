@@ -476,6 +476,8 @@ pub fn verifySourceBoundBorrowed(
     const identity = selected.circuitIdentity();
     if (proof.sum_count != n_components or !std.meta.eql(proof.circuit_hash, identity))
         return error.InvalidMixedProofIdentity;
+    for (proof.claimed_sums[n_components..]) |unused|
+        if (!unused.isZero()) return error.NonCanonicalMixedClaimedSums;
     var committed = try direct.PreprocessedCommitment.build(allocator, &pp, pcs);
     defer committed.deinit(allocator);
     const roots = proof.stark_proof.commitment_scheme_proof.commitments.items;
@@ -662,6 +664,14 @@ test "mixed N=3 native proof uses interleaved pair and many AIRs" {
     if (verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed)) |_| return error.AcceptedCompensatedMixedSums else |_| {}
     borrowed.claimed_sums[1] = borrowed.claimed_sums[1].sub(QM31.one());
     borrowed.claimed_sums[2] = borrowed.claimed_sums[2].add(QM31.one());
+    borrowed.claimed_sums[n_components] = QM31.one();
+    try std.testing.expectError(error.NonCanonicalMixedClaimedSums, verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed));
+    borrowed.claimed_sums[n_components] = QM31.zero();
+    for ([_]usize{ 1, 2 }) |commitment_index| {
+        proof.stark_proof.proof.commitment_scheme_proof.commitments.items[commitment_index][0] ^= 1;
+        if (verifySourceBoundBorrowed(allocator, source, source_bytes, bundle_bytes, &selected, words, borrowed)) |_| return error.AcceptedChangedMixedCommitment else |_| {}
+        proof.stark_proof.proof.commitment_scheme_proof.commitments.items[commitment_index][0] ^= 1;
+    }
     var reordered = selected;
     reordered.plan.calls[0] = selected.plan.calls[1];
     reordered.plan.calls[1] = selected.plan.calls[0];
