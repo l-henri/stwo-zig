@@ -89,9 +89,20 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     The canonicity hinges on the `(input·aux − 1)·bits₀ = 0` constraint
     rejecting the all-ones encoding of 0 — the circuit does carry the
     constraint its prover-supplied hints need (open question 1, answered
-    for this gadget).
-- **Not yet started**: `select_queries`' point-building half (`select`,
-  `pow2`, generator tables) atop these, FRI/DEEP gadget proofs, scope B/C.
+    for this gadget);
+  - **the `select_queries` point construction proven sound**
+    (`SelectQueries.lean`, `CircleGroup.lean`): `select`, `add_points_simd`,
+    `generator_point_simd`, the conditional-add loop
+    (`buildLoop_lane`, via the commutative-monoid structure of the circle
+    law and `smul` additivity), and the composed
+    `selectQueriesPoint_sound`: per lane, the 31 extracted bits are the
+    canonical digits of the drawn value, and the built point is
+    `gen^(queryIndex bits L)`, conjugated exactly when bit 0 is set.
+- **Remaining for deliverable 2**: the pure-arithmetic bridge from
+  `queryIndex` to the spec's `CircleDomain.at'` indexing (the gadget's bit
+  weights `2^(31−i)` are the bit-reversed coset index — no gates involved),
+  and the channel-draw half of `select_queries`
+  (`getQuerySelectionInputFromChannel`). Then FRI/DEEP gadgets, scope B/C.
 
 ## Deviations from Zig noted while specifying
 
