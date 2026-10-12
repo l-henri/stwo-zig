@@ -3,7 +3,7 @@
 Per `VERIFIER_FORMALIZATION_BRIEF.md` §6. Checkout: worktree
 `../stwo-zig-verifier-lean`, branch `formal/in-circuit-verifier` (cut from
 `4afa09dbf`), Lean project `formal/in-circuit-verifier/` (Lean 4.33.1 +
-Mathlib). Twelve commits so far, nothing pushed. Every theorem checks with
+Mathlib). Twenty-odd commits, nothing pushed. Every theorem checks with
 `#print axioms` = `propext, Classical.choice, Quot.sound` only; no
 `axiom` declarations, no `sorry`.
 
@@ -68,6 +68,10 @@ reciprocity).
   that point **is** `(canonicDomain L).at' (bitReverseIndex pos L)`, the
   exact point `Quotients.friAnswers` evaluates (generator order `2³¹`
   kernel-checked; `toPoint` additive; digits/bit-reversal arithmetic).
+  Exported end-to-end: **`selectQueries_domainPoint`** — gates hold ⇒ each
+  lane's point is the spec's domain point at
+  `bitReverseIndex ((lane input).val % 2^L) L`, matching the native
+  `drawQueries` mask and `friAnswers` indexing verbatim.
 
 **Caveat / remains trusted.** The channel-draw half
 (`get_query_selection_input_from_channel`) — the in-circuit Blake2s
@@ -91,6 +95,12 @@ outstanding mechanical work, not new mathematics.
   step 1 computes the spec's `Fri.foldLinePair` (both the circle-to-line
   and the inner line fold), with the twiddle pinned to `x⁻¹` by its
   product-one gate.
+- Further FRI-decommit primitives: `select_by_index` and
+  `validate_query_position_in_coset` (`SelectByIndex.lean`), `Simd::inv`
+  lane soundness (the twiddle hypothesis), `sub_points_simd` and the
+  `translate_to_base_point` loop (conjugate twin of the query loop), and
+  `extractExpected_matches_spec` (the OODS gadget output equals
+  `reconstructChunks` at the on-circle OODS point).
 
 **Remaining**: the `compute_fri_input` and `fri_decommit` emitter
 assemblies (loops + Merkle plumbing — the mathematics above is what they

@@ -103,7 +103,11 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     is additive and sends negated indices to conjugates, and
     `queryIndex_eq_domainPoint` equates the gadget's point with
     `(canonicDomain L).at' (bitReverseIndex pos L)` — the very point the
-    differentially-validated `Quotients.friAnswers` evaluates;
+    differentially-validated `Quotients.friAnswers` evaluates. The exported
+    end-to-end statement is **`selectQueries_domainPoint`**: gates hold ⇒
+    each lane's built point is the spec's domain point at
+    `bitReverseIndex (q.val % 2^L) L` for the lane's drawn word `q` —
+    verbatim the native verifier's query-to-point law;
   - **deliverable 3 started** (`OodsGadgets.lean`, `FieldTower.lean`,
     `DeepIdentity.lean`): `from_partial_evals` and
     `extract_expected_composition_eval` proven to compute the spec's

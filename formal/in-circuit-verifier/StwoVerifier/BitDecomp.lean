@@ -166,4 +166,28 @@ theorem canonical_31 (bits : ℕ → F) (x : F)
   · have hltP : natOf bits 31 < P := by unfold P at *; omega
     rw [← hcast, ZMod.val_cast_of_lt hltP]
 
+/-- The low `L` bits of a bit pattern denote its value mod `2^L`. -/
+theorem natOf_mod (bits : ℕ → F) (n L : ℕ) (hL : L ≤ n)
+    (hbits : ∀ i, i < n → bits i = 0 ∨ bits i = 1) :
+    natOf bits L = natOf bits n % 2 ^ L := by
+  have hsplit : natOf bits n = natOf bits L +
+      2 ^ L * ∑ j ∈ range (n - L), (bits (L + j)).val * 2 ^ j := by
+    unfold natOf
+    rw [← Finset.sum_range_add_sum_Ico _ hL,
+      Finset.sum_Ico_eq_sum_range]
+    congr 1
+    rw [Finset.mul_sum]
+    exact Finset.sum_congr rfl fun j _ => by
+      rw [pow_add]
+      ring
+  have hlt : natOf bits L < 2 ^ L :=
+    natOf_lt bits L (fun i hi => hbits i (by omega))
+  rw [hsplit, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt hlt]
+
+theorem bitVal_eq {x : F} (hx : x = 0 ∨ x = 1) :
+    x.val = if x = 0 then 0 else 1 := by
+  rcases hx with h | h
+  · rw [if_pos h, h]; simp
+  · rw [if_neg (by rw [h]; exact one_ne_zero), h, val_one]
+
 end StwoVerifier.BitDecomp

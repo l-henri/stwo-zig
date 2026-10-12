@@ -289,4 +289,61 @@ theorem queryIndex_eq_domainPoint {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L :
     unfold PIdx.toPoint PIdx.reduce circleOrder
     rw [Nat.mod_eq_of_lt hq]
 
+/-- **The exported query-selection theorem.** If `select_queries`' gates
+hold, then per lane `j` with drawn word `q := (lane input j).val`: the
+gadget's point is the spec's canonic-domain point at
+`bitReverseIndex (q % 2^L) L` — precisely the domain point
+`Quotients.friAnswers` evaluates for query position `q % 2^L` (the
+native `drawQueries` mask). -/
+theorem selectQueries_domainPoint {ρ : ℕ → QM31} {zero : ℕ}
+    {input : Gadgets.SimdReg} {L n : ℕ} (hL2 : 2 ≤ L) (hL30 : L ≤ 30)
+    (hzero : ρ zero = 0) (hcov : input.Covers)
+    (h : Gates.AllHold ρ (Gadgets.selectQueriesPoint zero input L n).ops)
+    (j : ℕ) (hj : j < input.len) :
+    Gadgets.PointSimd.lane ρ (Gadgets.selectQueriesPoint zero input L n).res.2 j
+      = (canonicDomain L).at'
+          (bitReverseIndex ((SimdReg.lane ρ input j).val % 2 ^ L) L) := by
+  obtain ⟨hnat, hpoint⟩ :=
+    Gadgets.selectQueriesPoint_sound hL2 hL30 hzero hcov h j hj
+  have hbits31 : ∀ i, i < 31 →
+      SimdReg.lane ρ ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i
+        Gadgets.dummySimd) j = 0 ∨
+      SimdReg.lane ρ ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i
+        Gadgets.dummySimd) j = 1 := by
+    have hpre : Gates.AllHold ρ (Gadgets.extractBits31 zero input n).ops := by
+      unfold Gadgets.selectQueriesPoint at h
+      rw [Gates.allHold_append, Gates.allHold_append, Gates.allHold_append,
+        Gates.allHold_append, Gates.allHold_append] at h
+      exact h.1.1.1.1.1
+    exact fun i hi => (Gadgets.extractBits31_sound hzero hcov hpre j hj).1 i hi
+  have hbN01 : ∀ i, Gadgets.bitNat ρ
+      ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i Gadgets.dummySimd) j ≤ 1 := by
+    intro i
+    unfold Gadgets.bitNat
+    split <;> omega
+  -- `Σ_{i<L} bitNatᵢ·2^i = q % 2^L`: the truncated digits.
+  have hq : (∑ i ∈ range L, Gadgets.bitNat ρ
+        ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i Gadgets.dummySimd) j
+        * 2 ^ i)
+      = (SimdReg.lane ρ input j).val % 2 ^ L := by
+    have hmod := BitDecomp.natOf_mod (fun i => SimdReg.lane ρ
+      ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i Gadgets.dummySimd) j)
+      31 L (by omega) hbits31
+    have hLsum : BitDecomp.natOf (fun i => SimdReg.lane ρ
+        ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i Gadgets.dummySimd) j) L
+        = ∑ i ∈ range L, Gadgets.bitNat ρ
+          ((Gadgets.selectQueriesPoint zero input L n).res.1.getD i Gadgets.dummySimd) j
+          * 2 ^ i := by
+      unfold BitDecomp.natOf
+      refine Finset.sum_congr rfl fun i hi => ?_
+      have hi31 : i < 31 := by have := Finset.mem_range.mp hi; omega
+      rw [BitDecomp.bitVal_eq (hbits31 i hi31)]
+      rfl
+    rw [← hLsum, hmod, hnat]
+  rw [hpoint, ← hq, ← queryIndex_eq_domainPoint hbN01 hL2 hL30]
+  by_cases hb0 : SimdReg.lane ρ ((Gadgets.selectQueriesPoint zero input L n).res.1.getD 0
+      Gadgets.dummySimd) j = 0
+  · rw [if_pos hb0, if_pos (by unfold Gadgets.bitNat; rw [if_pos hb0])]
+  · rw [if_neg hb0, if_neg (by unfold Gadgets.bitNat; rw [if_neg hb0]; omega)]
+
 end StwoVerifier.Bridge
