@@ -25,3 +25,4 @@ import StwoVerifier.SelectByIndex
 import StwoVerifier.SpecLemmas
 import StwoVerifier.DeepGadgets
 import StwoVerifier.DenNonzero
+import StwoVerifier.DeepRow
