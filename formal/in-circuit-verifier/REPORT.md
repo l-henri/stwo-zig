@@ -116,11 +116,16 @@ outstanding mechanical work, not new mathematics.
   denominator — via `den_identity` + `num_identity_batched`. This is the
   per-group per-query capstone; what remains above it is the walk over
   groups/queries and the response-register plumbing. Its side conditions
-  are themselves discharged from gates: `chain_alphas` (the alpha-power
-  chain registers satisfy the alpha hypothesis), and the denominator
-  guard (`prodChain_all_ne_zero` + `den_nonzero_of_reg`: the single
-  `inv(prod)` gate forces every per-query spec denominator nonzero —
-  the open-question-1 mechanism, now a theorem).
+  are partly discharged from gates already: `chain_alphas` (alpha-power
+  chain registers satisfy the alpha hypothesis; the emitter's chain is
+  global across responses, so per-group lists are subsequences of it),
+  and the guard lemmas `prodChain_all_ne_zero` + `den_nonzero_of_reg`
+  (the single `inv(prod)` gate forces each chained register nonzero).
+  The emitter's product is over the `d = im(P.y)` registers, so what the
+  gates provide is `im(P.y) ≠ 0` per sample point; the remaining
+  mathematical step — `im(P.y) ≠ 0` at an on-circle `P` forces the spec
+  denominator nonzero at every M31 domain point (circle ∩ line ≤ 2
+  points, both non-real) — is stated work, not yet a theorem.
 - `lastLayerEqs_spec` (`FriGadgets.lean`): the decommit's closing `eq`
   battery holding is exactly `Fri.lastLayerCheck` succeeding at the
   pinned last-layer degree bound 0.
