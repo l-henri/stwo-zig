@@ -146,4 +146,243 @@ theorem deepRow_spec {ρ : ℕ → QM31} {qx qy : ℕ}
   exact groupQuery_spec (bindings.getD i default) (hB _ hmem) hqx hqy
     (hden _ hmem) hm
 
+/-- The full query loop (`fri_queries`): one `deepRow` per query, each
+over its own query-point registers and per-query value registers, all
+from the shared zero register. -/
+def deepRows (zero : ℕ) :
+    List ((ℕ × ℕ) × List (GroupRegs × List ℕ)) → ℕ → Out (List ℕ)
+  | [], n => ⟨[], [], n⟩
+  | (q, gvs) :: rest, n =>
+    let r := deepRow q.1 q.2 gvs zero n
+    let t := deepRows zero rest r.next
+    ⟨r.ops ++ t.ops, r.res :: t.res, t.next⟩
+
+/-- Row registers hold their per-query values, given each query's row
+gadget is pinned at every offset. -/
+theorem deepRows_sound {ρ : ℕ → QM31} {zero : ℕ} :
+    ∀ (qs : List ((ℕ × ℕ) × List (GroupRegs × List ℕ)))
+      (rows : List QM31) (n : ℕ),
+      qs.length = rows.length →
+      (∀ i, i < qs.length → ∀ m,
+        AllHold ρ (deepRow (qs.getD i default).1.1 (qs.getD i default).1.2
+          (qs.getD i default).2 zero m).ops →
+        ρ (deepRow (qs.getD i default).1.1 (qs.getD i default).1.2
+          (qs.getD i default).2 zero m).res = rows.getD i 0) →
+      AllHold ρ (deepRows zero qs n).ops →
+      (deepRows zero qs n).res.length = qs.length ∧
+      ∀ i, i < qs.length →
+        ρ ((deepRows zero qs n).res.getD i 0) = rows.getD i 0 := by
+  intro qs
+  induction qs with
+  | nil =>
+    intro rows n _ _ _
+    exact ⟨rfl, fun i hi => by simp at hi⟩
+  | cons qgv rest ih =>
+    intro rows n hlen hrow h
+    obtain ⟨q, gvs⟩ := qgv
+    cases rows with
+    | nil => simp at hlen
+    | cons r rs =>
+      rw [show (deepRows zero ((q, gvs) :: rest) n).ops =
+        (deepRow q.1 q.2 gvs zero n).ops ++
+          (deepRows zero rest (deepRow q.1 q.2 gvs zero n).next).ops from rfl,
+        allHold_append] at h
+      obtain ⟨hq, hrest⟩ := h
+      have hhead : ρ (deepRow q.1 q.2 gvs zero n).res = r := by
+        have := hrow 0 (by simp) n
+        simp only [List.getD_cons_zero] at this
+        exact this hq
+      have hrow' : ∀ i, i < rest.length → ∀ m,
+          AllHold ρ (deepRow (rest.getD i default).1.1
+            (rest.getD i default).1.2 (rest.getD i default).2 zero m).ops →
+          ρ (deepRow (rest.getD i default).1.1 (rest.getD i default).1.2
+            (rest.getD i default).2 zero m).res = rs.getD i 0 := by
+        intro i hi m hm
+        have := hrow (i + 1) (by simpa using Nat.succ_lt_succ hi) m
+        simp only [List.getD_cons_succ] at this
+        exact this hm
+      have hlen' : rest.length = rs.length := by simpa using hlen
+      obtain ⟨ihlen, ihval⟩ := ih rs (deepRow q.1 q.2 gvs zero n).next
+        hlen' hrow' hrest
+      refine ⟨?_, ?_⟩
+      · show (deepRows zero rest _).res.length + 1 = rest.length + 1
+        rw [ihlen]
+      · intro i hi
+        cases i with
+        | zero => exact hhead
+        | succ i =>
+          show ρ ((deepRows zero rest _).res.getD i 0) = rs.getD i 0
+          exact ihval i (by simpa using hi)
+
+set_option maxHeartbeats 800000 in
+/-- The query loop's row registers hold the spec row values: at query
+`i`, the sum of `batchTerm`s at domain point
+`bitrev(queryPositions[i])`, with `row = i`. -/
+theorem deepRows_spec {ρ : ℕ → QM31} {zero : ℕ}
+    {flatCols : List (List F)} {liftingLogSize : ℕ}
+    {queryPositions : List ℕ} {batches : List Quotients.SampleBatch}
+    (entries : List ((ℕ × ℕ) × List GroupBinding)) (n : ℕ)
+    (hzero : ρ zero = 0)
+    (hq : ∀ i, i < entries.length →
+      ρ (entries.getD i default).1.1
+        = QM31.fromBase ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).x ∧
+      ρ (entries.getD i default).1.2
+        = QM31.fromBase ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).y)
+    (hB : ∀ i, i < entries.length →
+      ∀ gb ∈ (entries.getD i default).2, Bound ρ flatCols i gb)
+    (hbatch : ∀ i, i < entries.length →
+      (entries.getD i default).2.map GroupBinding.batch = batches)
+    (hdn : ∀ i, i < entries.length →
+      ∀ gb ∈ (entries.getD i default).2,
+        Quotients.denominator gb.batch.point
+          ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)) ≠ 0)
+    (h : AllHold ρ (deepRows zero
+      (entries.map fun e => (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).ops) :
+    (deepRows zero (entries.map fun e =>
+      (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).res.length
+      = entries.length ∧
+    ∀ i, i < entries.length →
+      ρ ((deepRows zero (entries.map fun e =>
+        (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).res.getD i 0)
+        = (batches.map fun b => Quotients.batchTerm b flatCols i
+            ((canonicDomain liftingLogSize).at'
+              (bitReverseIndex (queryPositions.getD i 0) liftingLogSize))).sum := by
+  have hmain := deepRows_sound
+    (entries.map fun e => (e.1, e.2.map fun gb => (gb.g, gb.valRegs)))
+    ((List.range entries.length).map fun i =>
+      (batches.map fun b => Quotients.batchTerm b flatCols i
+        ((canonicDomain liftingLogSize).at'
+          (bitReverseIndex (queryPositions.getD i 0) liftingLogSize))).sum)
+    n (by simp) ?_ h
+  · obtain ⟨hlenR, hvalR⟩ := hmain
+    refine ⟨by rw [hlenR, List.length_map], fun i hi => ?_⟩
+    have := hvalR i (by rw [List.length_map]; exact hi)
+    rw [this, getD_map _ 0 (List.range entries.length) i (by simpa using hi)]
+    have hri : (List.range entries.length).getD i default = i := by
+      rw [List.getD_eq_getElem?_getD,
+        List.getElem?_eq_getElem (by simpa using hi)]
+      simp
+    rw [hri]
+  · intro i hi m hm
+    rw [List.length_map] at hi
+    have h1 : ((entries.map fun e =>
+        (e.1, e.2.map fun gb => (gb.g, gb.valRegs))).getD i default)
+        = ((entries.getD i default).1,
+           (entries.getD i default).2.map fun gb => (gb.g, gb.valRegs)) :=
+      getD_map _ _ _ i hi
+    rw [h1] at hm
+    have hrows : ((List.range entries.length).map fun j =>
+        (batches.map fun b => Quotients.batchTerm b flatCols j
+          ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD j 0) liftingLogSize))).sum).getD i 0
+        = (batches.map fun b => Quotients.batchTerm b flatCols i
+            ((canonicDomain liftingLogSize).at'
+              (bitReverseIndex (queryPositions.getD i 0) liftingLogSize))).sum := by
+      rw [getD_map _ 0 (List.range entries.length) i (by simpa using hi)]
+      have hri : (List.range entries.length).getD i default = i := by
+        rw [List.getD_eq_getElem?_getD,
+          List.getElem?_eq_getElem (by simpa using hi)]
+        simp
+      rw [hri]
+    rw [h1, hrows]
+    have hrow := deepRow_spec (ρ := ρ)
+      (flatCols := flatCols) (row := i)
+      (xq := ((canonicDomain liftingLogSize).at'
+        (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).x)
+      (yq := ((canonicDomain liftingLogSize).at'
+        (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).y)
+      (entries.getD i default).2 zero m
+      (hB i hi) (hq i hi).1 (hq i hi).2
+      (fun gb hgb => hdn i hi gb hgb) hm
+    rw [hrow, hzero, zero_add, ← hbatch i hi, List.map_map]
+    rfl
+
+set_option maxHeartbeats 800000 in
+/-- **`compute_fri_input` computes `friAnswers`.** Under the circuit's
+guards and with the registers bound to the batch data, the spec's
+`friAnswers` succeeds and returns exactly the values of the circuit's
+row registers — the outer-walk capstone for deliverable 3. -/
+theorem friAnswers_eq_rows {ρ : ℕ → QM31} {zero : ℕ}
+    (columnLogSizes : List (List Nat)) (sampledPoints : List (List (List PointQ)))
+    (sampledValues : List (List (List QM31))) (randomCoeff : QM31)
+    (queryPositions : List Nat) (queriedValues : List (List (List F)))
+    (liftingLogSize : Nat) (batches : List Quotients.SampleBatch)
+    (entries : List ((ℕ × ℕ) × List GroupBinding)) (n : ℕ)
+    (hbuild : Quotients.buildSampleBatches sampledPoints sampledValues
+      columnLogSizes liftingLogSize randomCoeff = .ok batches)
+    (hcols : ∀ col ∈ queriedValues.flatten, col.length = queryPositions.length)
+    (him : ∀ b ∈ batches, Deep.imQ b.point.y ≠ 0)
+    (hidx : ∀ b ∈ batches, ∀ e ∈ b.entries,
+      e.columnIndex < queriedValues.flatten.length)
+    (hpos : ∀ pos ∈ queryPositions, pos < (canonicDomain liftingLogSize).size)
+    (hdenS : ∀ b ∈ batches, ∀ pos ∈ queryPositions,
+      Quotients.denominator b.point ((canonicDomain liftingLogSize).at'
+        (bitReverseIndex pos liftingLogSize)) ≠ 0)
+    (hzero : ρ zero = 0)
+    (hqp : entries.length = queryPositions.length)
+    (hq : ∀ i, i < entries.length →
+      ρ (entries.getD i default).1.1
+        = QM31.fromBase ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).x ∧
+      ρ (entries.getD i default).1.2
+        = QM31.fromBase ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)).y)
+    (hB : ∀ i, i < entries.length →
+      ∀ gb ∈ (entries.getD i default).2,
+        Bound ρ queriedValues.flatten i gb)
+    (hbatch : ∀ i, i < entries.length →
+      (entries.getD i default).2.map GroupBinding.batch = batches)
+    (h : AllHold ρ (deepRows zero
+      (entries.map fun e => (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).ops) :
+    Quotients.friAnswers columnLogSizes sampledPoints sampledValues randomCoeff
+        queryPositions queriedValues liftingLogSize
+      = .ok ((deepRows zero (entries.map fun e =>
+          (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).res.map ρ) := by
+  have hposD : ∀ i, i < entries.length →
+      queryPositions.getD i 0 ∈ queryPositions := by
+    intro i hi
+    have hi' : i < queryPositions.length := hqp ▸ hi
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
+    exact List.getElem_mem hi'
+  have hdn : ∀ i, i < entries.length →
+      ∀ gb ∈ (entries.getD i default).2,
+        Quotients.denominator gb.batch.point
+          ((canonicDomain liftingLogSize).at'
+            (bitReverseIndex (queryPositions.getD i 0) liftingLogSize)) ≠ 0 := by
+    intro i hi gb hgb
+    have hbm : gb.batch ∈ batches := by
+      rw [← hbatch i hi]
+      exact List.mem_map_of_mem hgb
+    exact hdenS gb.batch hbm _ (hposD i hi)
+  obtain ⟨hlenR, hvalR⟩ := deepRows_spec entries n hzero hq hB hbatch hdn h
+  rw [Quotients.friAnswers_ok columnLogSizes sampledPoints sampledValues
+    randomCoeff queryPositions queriedValues liftingLogSize batches
+    hbuild hcols him hidx hpos hdenS]
+  refine congrArg Except.ok ?_
+  refine List.ext_getElem ?_ ?_
+  · rw [List.length_map, List.length_zipIdx, List.length_map, hlenR, hqp]
+  · intro i h1 h2
+    have hiE : i < entries.length := by
+      rw [List.length_map, List.length_zipIdx] at h1
+      rw [hqp]
+      exact h1
+    have hiQ : i < queryPositions.length := hqp ▸ hiE
+    rw [List.getElem_map, List.getElem_zipIdx, List.getElem_map]
+    have hgd : ρ ((deepRows zero (entries.map fun e =>
+        (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).res.getD i 0)
+        = ρ ((deepRows zero (entries.map fun e =>
+          (e.1, e.2.map fun gb => (gb.g, gb.valRegs))) n).res[i]) := by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem (by
+        rw [hlenR]; exact hiE)]
+      rfl
+    rw [← hgd, hvalR i hiE]
+    have hqd : queryPositions.getD i 0 = queryPositions[i] := by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hiQ]
+      rfl
+    rw [← hqd]
+    simp only [Nat.zero_add]
+
 end StwoVerifier.Gadgets

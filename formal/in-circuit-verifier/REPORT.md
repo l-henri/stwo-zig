@@ -139,9 +139,27 @@ outstanding mechanical work, not new mathematics.
   (`selectQueries_domainPoint`) to `compute_fri_input`'s scalar
   `q_x`/`q_y` inputs.
 
-**Remaining**: the `compute_fri_input` outer walk (over groups and
-queries, now a composition of `processGroupQuery_sound` instances) and
-the `fri_decommit` layer-loop assembly (loops + Merkle plumbing — the
+- **The `compute_fri_input` outer walk is done** (`DeepRow.lean`,
+  `SpecRow.lean`, `DeepRowSpec.lean`). The capstone was split at the
+  emitter's real boundary — `groupSetup` runs once per group, the
+  per-query quotients sit at distant offsets (`groupQuery_sound`
+  re-proves the batch term at any offset), `deepRow` is one query's
+  quotient+add chain, `deepRows` the query loop. Spec side,
+  **`friAnswers_ok`** evaluates the spec's row loop in closed form
+  under the circuit-enforced guards (nondegenerate batch points,
+  nonvanishing denominators): each row is the sum over batches of the
+  gadget-shaped batch term. The two meet in
+  **`friAnswers_eq_rows`**: with the registers bound to the batch data
+  (`Bound`: `groupSetup_sound`'s facts plus the response/value register
+  pinning), the spec's `friAnswers` *succeeds* and returns exactly the
+  values of the circuit's row registers. What remains above it is
+  provenance plumbing: discharging `Bound` from `selectQueries` /
+  `unpackIdx` / the alpha chain and the Merkle-value registers, and the
+  `buildSampleBatches`-to-response-array ordering bridge
+  (`flattenBatches_pushEntry` is the mechanism).
+
+**Remaining**: the `Bound` provenance plumbing above, and the
+`fri_decommit` layer-loop assembly (loops + Merkle plumbing — the
 mathematics above is what they reduce to). The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially, including `Fri.commitInner`), so
 the assemblies can be proven against them directly; `SpecLemmas.lean`
