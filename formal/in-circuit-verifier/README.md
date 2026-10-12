@@ -124,7 +124,16 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     circuit's per-point accumulation is the sum of per-response terms,
     `−u` times the spec batch's, and sample grouping never changes the
     sum — the remaining `compute_fri_input` work is emitter plumbing,
-    not mathematics.
+    not mathematics;
+  - **more FRI-decommit primitives proven** (`SelectByIndex.lean`,
+    additions to `SelectQueries.lean`, `OodsGadgets.lean`):
+    `select_by_index` (the mux tree picks the bits' binary index) and
+    `validate_query_position_in_coset` on top of it; `Simd::inv` lane
+    soundness (the twiddle hypothesis `foldCoset1_sound` consumes);
+    `sub_points_simd` and the `translate_to_base_point` loop
+    (conjugate twin of the query loop); and the OODS corollary
+    `extractExpected_matches_spec` tying the gadget to
+    `reconstructChunks` at the on-circle OODS point.
 - **Remaining**: the channel-draw half of `select_queries`
   (`getQuerySelectionInputFromChannel`; its transcript law is proven in
   starked-bitcoin's `Circuit/Channel.lean` for the same builder), the DEEP

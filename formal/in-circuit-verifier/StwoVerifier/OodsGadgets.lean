@@ -169,4 +169,23 @@ theorem securePoint_onCircle {t : QM31} {p : PointQ}
           ring
       _ = 1 := by rw [hcancel, mul_one]
 
+/-- **The OODS reconstruction corollary**: at an on-circle OODS point `P`
+whose x-coordinate the gadget received, the gadget output is exactly the
+spec's split-1 chunk reconstruction — the composition value
+`NativeAccepts` compares against the AIR evaluation. -/
+theorem extractExpected_matches_spec {ρ : ℕ → QM31} {one : ℕ}
+    {evals : Fin 8 → ℕ} {oodsX : ℕ} {k n : ℕ} {P : PointQ}
+    (hone : ρ one = 1) (hk : 2 ≤ k)
+    (hP : OnCircleQ P) (hPx : P.x = ρ oodsX)
+    (h : AllHold ρ (extractExpectedCompositionEvalG one evals oodsX k n).ops) :
+    reconstructChunks
+        [fromPartialEvals [ρ (evals 0), ρ (evals 1), ρ (evals 2), ρ (evals 3)],
+         fromPartialEvals [ρ (evals 4), ρ (evals 5), ρ (evals 6), ρ (evals 7)]]
+        P (k - 1 + 1) 1
+      = some (ρ (extractExpectedCompositionEvalG one evals oodsX k n).res) := by
+  rw [reconstructChunks_two _ _ _ _ (by omega),
+    extractExpectedCompositionEvalG_sound hone h,
+    repeatedDouble_x_onCircle hP, hPx,
+    show k - 1 + 1 - 1 + 1 - 2 = k - 2 from by omega]
+
 end StwoVerifier.Gadgets
