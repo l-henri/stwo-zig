@@ -1426,6 +1426,17 @@
     {
       "prefixes": [
         ".github/workflows/ci.yml",
+        ".github/workflows/architecture-authority.yml",
+        ".github/workflows/native-oracle.yml"
+      ],
+      "lanes": [
+        "metal_compile",
+        "metal_aot"
+      ]
+    },
+    {
+      "prefixes": [
+        ".github/workflows/ci.yml",
         "scripts/ci_scope_plan.py",
         "scripts/ci_scope_run.py",
         "scripts/ci_scope_push.py",

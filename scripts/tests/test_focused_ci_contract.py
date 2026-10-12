@@ -141,7 +141,6 @@ class PlannerContractTests(unittest.TestCase):
         for path in (
             "conformance/ci-touchpoints-v1.json",
             "scripts/ci_scope_plan.py",
-            ".github/workflows/ci.yml",
         ):
             with self.subTest(path=path):
                 self.assertEqual(expected, self.lanes_for(path))

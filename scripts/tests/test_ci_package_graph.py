@@ -321,10 +321,17 @@ class PlanIntegrationTest(unittest.TestCase):
     def test_truly_unclassified_path_fails_open_to_the_full_matrix(self) -> None:
         self.assertEqual(self.select("third_party/vendored.c"), set(POLICY["lanes"]))
 
-    def test_ci_workflow_change_runs_control_contracts_not_products(self) -> None:
+    def test_macos_workflow_changes_validate_compilers_without_device_workloads(self) -> None:
+        expected = {"static", "script_contracts", "metal_compile", "metal_aot"}
+        for path in (
+            ".github/workflows/architecture-authority.yml",
+            ".github/workflows/native-oracle.yml",
+        ):
+            with self.subTest(path=path):
+                self.assertEqual(expected, self.select(path))
         self.assertEqual(
             self.select(".github/workflows/ci.yml"),
-            {"static", "script_contracts", "build_graph"},
+            expected | {"build_graph"},
         )
 
     def test_independent_workflow_change_runs_only_its_script_contracts(self) -> None:
