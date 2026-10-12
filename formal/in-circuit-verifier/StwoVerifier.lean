@@ -26,3 +26,4 @@ import StwoVerifier.SpecLemmas
 import StwoVerifier.DeepGadgets
 import StwoVerifier.DenNonzero
 import StwoVerifier.DeepRow
+import StwoVerifier.SpecRow
