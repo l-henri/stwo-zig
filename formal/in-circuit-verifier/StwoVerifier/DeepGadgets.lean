@@ -283,4 +283,167 @@ theorem map_sum_congr_getD {α : Type} [Inhabited α] (l : List α)
 
 instance : Inhabited (ℕ × ℕ) := ⟨(0, 0)⟩
 
+/-- A mapped sum as a range-indexed sum (getD form). -/
+theorem map_sum_eq_range {α : Type} [Inhabited α] (l : List α) (f : α → QM31) :
+    (l.map f).sum = ∑ i ∈ Finset.range l.length, f (l.getD i default) := by
+  induction l with
+  | nil => simp
+  | cons a rest ih =>
+    simp only [List.map_cons, List.sum_cons, List.length_cons]
+    rw [Finset.sum_range_succ' (fun i => f ((a :: rest).getD i default)) rest.length]
+    simp only [List.getD_cons_succ, List.getD_cons_zero]
+    rw [ih]
+    ring
+
+/-- A zipped mapped sum as a range-indexed sum over the common length. -/
+theorem zip_map_sum_eq_range {α β : Type} [Inhabited α] [Inhabited β]
+    (A : List α) (B : List β) (f : α → β → QM31) (hlen : A.length = B.length) :
+    ((A.zip B).map fun (a, b) => f a b).sum
+      = ∑ i ∈ Finset.range A.length,
+          f (A.getD i default) (B.getD i default) := by
+  rw [map_sum_eq_range, List.length_zip, hlen, Nat.min_self]
+  refine Finset.sum_congr rfl fun i hi => ?_
+  have hiB := Finset.mem_range.mp hi
+  have hiA : i < A.length := by omega
+  have hz : (A.zip B).getD i default = (A.getD i default, B.getD i default) := by
+    rw [List.getD_eq_getElem?_getD,
+      show (A.zip B)[i]? = some (A[i], B[i]) from
+        List.getElem?_zip_eq_some.2 ⟨List.getElem?_eq_getElem hiA,
+          List.getElem?_eq_getElem hiB⟩]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hiA,
+      List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hiB]
+    rfl
+  rw [hz]
+
+theorem range_map_sum (n : ℕ) (f : ℕ → QM31) :
+    ((List.range n).map f).sum = ∑ i ∈ Finset.range n, f i := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.range_succ, List.map_append, List.sum_append,
+      Finset.sum_range_succ, ih]
+    simp
+
+/-- One group, one query: `d/e/f` from the point, the accumulate walk over
+the responses (from the zero register), `b`, and the query quotient. -/
+def processGroupQuery (imMask zero px py : ℕ) (rsReg : List (ℕ × ℕ))
+    (valRegs : List ℕ) (qx qy : ℕ) (n : ℕ) : Out ℕ :=
+  let ini := auxInit imMask px py n
+  let walk := auxAccumList imMask ini.res.1 rsReg zero zero ini.next
+  let fin := auxFinalize ini.res.1 walk.res.2.2 walk.res.2.1 py walk.next
+  let q := deepQuery walk.res.2.1 fin.res ini.res.1 ini.res.2.1 ini.res.2.2
+    qx qy (walk.res.1.zip valRegs) fin.next
+  ⟨ini.ops ++ walk.ops ++ fin.ops ++ q.ops, q.res, q.next⟩
+
+set_option maxHeartbeats 1600000 in
+/-- **The per-group quotient is the spec's batch term.** With the point,
+query and response registers pinned to their spec values (`α'ᵢ = −2u·αᵢ`
+as the alpha chain provides), and the spec denominator nonzero, the
+`div`-gate output is the spec batch numerator times the inverse CM31
+denominator — the exact summand of `Quotients.friAnswers`' row value. -/
+theorem processGroupQuery_sound {ρ : ℕ → QM31}
+    {imMask zero px py qx qy n : ℕ}
+    {rsReg : List (ℕ × ℕ)} {valRegs : List ℕ}
+    {P : PointQ} {xq yq : F} {rsAlpha : List QM31} {vals : List F}
+    (hmask : ρ imMask = QM31.fromM31s 0 0 1 1) (hzero : ρ zero = 0)
+    (hpx : ρ px = P.x) (hpy : ρ py = P.y)
+    (hqx : ρ qx = QM31.fromBase xq) (hqy : ρ qy = QM31.fromBase yq)
+    (hlenV : valRegs.length = rsReg.length)
+    (halpha : ∀ i, i < rsReg.length →
+      ρ (rsReg.getD i (0, 0)).1 = (-2 : QM31) * Deep.uu * rsAlpha.getD i 0)
+    (hvals : ∀ i, i < rsReg.length →
+      ρ (valRegs.getD i 0) = QM31.fromBase (vals.getD i 0))
+    (h : AllHold ρ (processGroupQuery imMask zero px py rsReg valRegs qx qy n).ops)
+    (hden : Quotients.denominator P ⟨xq, yq⟩ ≠ 0) :
+    ρ (processGroupQuery imMask zero px py rsReg valRegs qx qy n).res
+      = ((((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r =>
+          r.1 * (P.y.complexConjugate - P.y) * r.2.2
+            - (r.1 * (r.2.1.complexConjugate - r.2.1) * QM31.fromBase yq
+              + (r.1 * (r.2.1 * (P.y.complexConjugate - P.y))
+                - r.1 * ((r.2.1.complexConjugate - r.2.1) * P.y)))).sum).mulCM31
+          (Quotients.denominator P ⟨xq, yq⟩)⁻¹ := by
+  unfold processGroupQuery at h
+  rw [allHold_append, allHold_append, allHold_append] at h
+  obtain ⟨⟨⟨hini, hwalk⟩, hfin⟩, hq⟩ := h
+  obtain ⟨hd, he, hf⟩ := auxInit_sound hmask hini
+  obtain ⟨hwlen, hwc, hwa, hwv⟩ := auxAccumList_sound hmask rsReg zero zero _ hwalk
+  have hb := auxFinalize_sound hfin
+  have hql := deepQuery_sound hq
+  -- The denominator register value is `−u·embed(den)`.
+  have hdenreg : ρ (auxInit imMask px py n).res.1 * ρ qx
+      - (ρ (auxInit imMask px py n).res.2.1 * ρ qy + ρ (auxInit imMask px py n).res.2.2)
+      = -Deep.uu * Deep.embed (Quotients.denominator P ⟨xq, yq⟩) := by
+    rw [hd, he, hf, hpx, hpy, hqx, hqy]
+    exact Deep.den_identity P xq yq
+  -- The three register sums, instantiated to spec data over the triple list.
+  have hsumA : (rsReg.map fun (a, v) => ρ a * Deep.imQ (ρ v)).sum
+      = (((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r => ((-2 : QM31) * Deep.uu * r.1) * Deep.imQ r.2.1).sum := by
+    rw [map_sum_eq_range, List.map_map, range_map_sum]
+    refine Finset.sum_congr rfl fun i hi => ?_
+    have hi' := Finset.mem_range.mp hi
+    show ρ (rsReg.getD i (0, 0)).1 * Deep.imQ (ρ (rsReg.getD i (0, 0)).2)
+      = ((-2 : QM31) * Deep.uu * rsAlpha.getD i 0) * Deep.imQ (ρ (rsReg.getD i (0, 0)).2)
+    rw [halpha i hi']
+  have hsumV : (rsReg.map fun (a, v) => ρ a * ρ v).sum
+      = (((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r => ((-2 : QM31) * Deep.uu * r.1) * r.2.1).sum := by
+    rw [map_sum_eq_range, List.map_map, range_map_sum]
+    refine Finset.sum_congr rfl fun i hi => ?_
+    have hi' := Finset.mem_range.mp hi
+    show ρ (rsReg.getD i (0, 0)).1 * ρ (rsReg.getD i (0, 0)).2
+      = ((-2 : QM31) * Deep.uu * rsAlpha.getD i 0) * ρ (rsReg.getD i (0, 0)).2
+    rw [halpha i hi']
+  have hsumC : (((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.zip valRegs).map
+        fun (c, v) => ρ c * ρ v).sum
+      = (((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r => Deep.imQ P.y * ((-2 : QM31) * Deep.uu * r.1) * r.2.2).sum := by
+    rw [map_sum_eq_range, List.length_zip, hwlen, hlenV, Nat.min_self,
+      List.map_map, range_map_sum]
+    refine Finset.sum_congr rfl fun i hi => ?_
+    have hi' := Finset.mem_range.mp hi
+    have hiA : i < (auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.length := by rw [hwlen]; exact hi'
+    have hiB : i < valRegs.length := by rw [hlenV]; exact hi'
+    have hz : ((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.zip valRegs).getD i default
+        = ((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.getD i 0, valRegs.getD i 0) := by
+      rw [List.getD_eq_getElem?_getD,
+        show ((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.zip valRegs)[i]?
+            = some ((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1[i], valRegs[i]) from
+          List.getElem?_zip_eq_some.2 ⟨List.getElem?_eq_getElem hiA,
+            List.getElem?_eq_getElem hiB⟩]
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hiA,
+        List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hiB]
+      rfl
+    rw [hz]
+    show ρ ((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.getD i 0) * ρ (valRegs.getD i 0)
+      = Deep.imQ P.y * ((-2 : QM31) * Deep.uu * rsAlpha.getD i 0)
+          * QM31.fromBase (vals.getD i 0)
+    rw [hwc i hi', hvals i hi', halpha i hi', hd, hpy]
+  -- Assemble the numerator: the batched identity.
+  have hnum : ρ (auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.2.1 * ρ qy
+      + ρ (auxFinalize (auxInit imMask px py n).res.1 (auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.2.2 (auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.2.1 py (auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).next).res
+      - (((auxAccumList imMask (auxInit imMask px py n).res.1 rsReg zero zero (auxInit imMask px py n).next).res.1.zip valRegs).map
+          fun (c, v) => ρ c * ρ v).sum
+      = -Deep.uu * (((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r =>
+          r.1 * (P.y.complexConjugate - P.y) * r.2.2
+            - (r.1 * (r.2.1.complexConjugate - r.2.1) * QM31.fromBase yq
+              + (r.1 * (r.2.1 * (P.y.complexConjugate - P.y))
+                - r.1 * ((r.2.1.complexConjugate - r.2.1) * P.y)))).sum := by
+    rw [hb, hwa, hwv, hzero, zero_add, zero_add, hsumA, hsumV, hsumC,
+      hd, hpy, hqy]
+    exact Deep.num_identity_batched P (QM31.fromBase yq) ((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0)))
+  -- The div gate pins the quotient.
+  have hdenne : (-Deep.uu * Deep.embed (Quotients.denominator P ⟨xq, yq⟩)) ≠ 0 :=
+    mul_ne_zero (neg_ne_zero.mpr Deep.uu_ne_zero) (Deep.embed_ne_zero hden)
+  have hquot := hql
+  rw [hdenreg] at hquot
+  rw [hnum] at hquot
+  have hfinal : ρ (processGroupQuery imMask zero px py rsReg valRegs qx qy n).res
+      = (-Deep.uu * (((List.range rsReg.length).map fun i => (rsAlpha.getD i 0, ρ (rsReg.getD i (0, 0)).2, QM31.fromBase (vals.getD i 0))).map fun r =>
+          r.1 * (P.y.complexConjugate - P.y) * r.2.2
+            - (r.1 * (r.2.1.complexConjugate - r.2.1) * QM31.fromBase yq
+              + (r.1 * (r.2.1 * (P.y.complexConjugate - P.y))
+                - r.1 * ((r.2.1.complexConjugate - r.2.1) * P.y)))).sum)
+        / (-Deep.uu * Deep.embed (Quotients.denominator P ⟨xq, yq⟩)) :=
+    (eq_div_iff hdenne).mpr hquot
+  rw [hfinal, mul_div_mul_left _ _ (neg_ne_zero.mpr Deep.uu_ne_zero),
+    div_eq_mul_inv, ← Deep.embed_inv, ← Deep.mulCM31_eq]
+
 end StwoVerifier.Gadgets

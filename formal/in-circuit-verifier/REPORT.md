@@ -106,10 +106,21 @@ outstanding mechanical work, not new mathematics.
   `translate_to_base_point` loop (conjugate twin of the query loop), and
   `extractExpected_matches_spec` (the OODS gadget output equals
   `reconstructChunks` at the on-circle OODS point).
+- `DeepGadgets.lean`: the `compute_fri_input` accumulation gadgets
+  (`OodsPointAuxiliary` init/accumulate/finalize, the subtraction chain,
+  the `div`-gate quotient, the alpha-power chain), each with a soundness
+  lemma, capped by **`processGroupQuery_sound`**: for one sample group and
+  one query, with the point/query/alpha registers pinned to spec values,
+  the assembled gadget's `div` output **is** the spec's batch term —
+  `Quotients.friAnswers`' summand, numerator `.mulCM31` inverse
+  denominator — via `den_identity` + `num_identity_batched`. This is the
+  per-group per-query capstone; what remains above it is the walk over
+  groups/queries and the response-register plumbing.
 
-**Remaining**: the `compute_fri_input` and `fri_decommit` emitter
-assemblies (loops + Merkle plumbing — the mathematics above is what they
-reduce to). The spec's imperative loops have been refactored into pure
+**Remaining**: the `compute_fri_input` outer walk (over groups and
+queries, now a composition of `processGroupQuery_sound` instances) and
+the `fri_decommit` layer-loop assembly (loops + Merkle plumbing — the
+mathematics above is what they reduce to). The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially), so the assemblies can be proven
 against them directly; `SpecLemmas.lean` starts that layer (at last-layer
 degree bound 0, the spec's final check is pointwise equality with the
