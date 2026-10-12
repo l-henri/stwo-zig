@@ -225,6 +225,75 @@ theorem addPointsSimd_lane {ρ : ℕ → QM31} {p0 p1 : PointSimd} {len count n 
   · exact lx.trans (by rw [lxx, lyy]; rfl)
   · exact ly.trans (by rw [lxy, lyx]; rfl)
 
+/-- `sub_points_simd`: the four products, then `x₀x₁ + y₀y₁` and
+`y₀x₁ − x₀y₁` — addition with the conjugate. -/
+def subPointsSimd (p0 p1 : PointSimd) (n : ℕ) : Out PointSimd :=
+  let x0x1 := simdMul p0.x p1.x n
+  let x0y1 := simdMul p0.x p1.y x0x1.next
+  let y0x1 := simdMul p0.y p1.x x0y1.next
+  let y0y1 := simdMul p0.y p1.y y0x1.next
+  let x := simdAdd x0x1.res y0y1.res y0y1.next
+  let y := simdSub y0x1.res x0y1.res x.next
+  ⟨x0x1.ops ++ x0y1.ops ++ y0x1.ops ++ y0y1.ops ++ x.ops ++ y.ops,
+   ⟨x.res, y.res⟩, y.next⟩
+
+theorem subPointsSimd_shape {p0 p1 : PointSimd} {len count n : ℕ}
+    (h0 : p0.Shape len count) (h1 : p1.Shape len count) :
+    (subPointsSimd p0 p1 n).res.Shape len count := by
+  obtain ⟨l0x, l0y, d0x, d0y, hc⟩ := h0
+  obtain ⟨l1x, l1y, d1x, d1y, -⟩ := h1
+  refine ⟨l0x, l0y, ?_, ?_, hc⟩
+  · show (simdAdd (simdMul p0.x p1.x n).res _ _).res.data.length = count
+    rw [simdAdd_data_len, simdMul_data_len, simdMul_data_len]
+    omega
+  · show (simdSub (simdMul p0.y p1.x _).res _ _).res.data.length = count
+    rw [simdSub_data_len, simdMul_data_len, simdMul_data_len]
+    omega
+
+theorem subPointsSimd_lane {ρ : ℕ → QM31} {p0 p1 : PointSimd} {len count n : ℕ}
+    (h0 : p0.Shape len count) (h1 : p1.Shape len count)
+    (h : AllHold ρ (subPointsSimd p0 p1 n).ops) (j : ℕ) (hj : j < len) :
+    PointSimd.lane ρ (subPointsSimd p0 p1 n).res j
+      = (PointSimd.lane ρ p0 j).add (PointSimd.lane ρ p1 j).conjugate := by
+  obtain ⟨l0x, l0y, d0x, d0y, hc⟩ := h0
+  obtain ⟨l1x, l1y, d1x, d1y, -⟩ := h1
+  unfold subPointsSimd at h
+  rw [allHold_append, allHold_append, allHold_append, allHold_append,
+    allHold_append] at h
+  obtain ⟨⟨⟨⟨⟨hxx, hxy⟩, hyx⟩, hyy⟩, hx⟩, hy⟩ := h
+  have c0x : p0.x.Covers := by show p0.x.len ≤ 4 * p0.x.data.length; omega
+  have c0y : p0.y.Covers := by show p0.y.len ≤ 4 * p0.y.data.length; omega
+  have lxx := simdMul_lane c0x (by rw [l0x]; omega) hxx j (by omega)
+  have lxy := simdMul_lane c0x (by rw [l0x]; omega) hxy j (by omega)
+  have lyx := simdMul_lane c0y (by rw [l0y]; omega) hyx j (by omega)
+  have lyy := simdMul_lane c0y (by rw [l0y]; omega) hyy j (by omega)
+  have cxx : (simdMul p0.x p1.x n).res.Covers := by
+    show p0.x.len ≤ 4 * (simdMul p0.x p1.x n).res.data.length
+    rw [simdMul_data_len]; omega
+  have cyx : (simdMul p0.y p1.x (simdMul p0.x p1.y
+      (simdMul p0.x p1.x n).next).next).res.Covers := by
+    show p0.y.len ≤ 4 * _
+    rw [simdMul_data_len]; omega
+  have lx := simdAdd_lane cxx (by
+      show p0.x.len ≤ 4 * (simdMul p0.y p1.y _).res.data.length
+      rw [simdMul_data_len]; omega) hx j (by
+      show j < p0.x.len; omega)
+  have ly := simdSub_lane cyx (by
+      show p0.y.len ≤ 4 * (simdMul p0.x p1.y _).res.data.length
+      rw [simdMul_data_len]; omega) hy j (by
+      show j < p0.y.len; omega)
+  refine CPoint.ext' ?_ ?_
+  · refine lx.trans ?_
+    rw [lxx, lyy]
+    unfold CPoint.add CPoint.conjugate PointSimd.lane
+    simp only
+    ring
+  · refine ly.trans ?_
+    rw [lyx, lxy]
+    unfold CPoint.add CPoint.conjugate PointSimd.lane
+    simp only
+    ring
+
 /-! ### The query-point loop
 
 `select_queries` starts from the size-`2^(log+1)` subgroup generator and,
@@ -745,5 +814,204 @@ theorem selectQueriesPoint_sound {ρ : ℕ → QM31} {zero : ℕ} {input : SimdR
           (fun i => bitNat ρ (eb.res.getD i dummySimd) j) L)).y
     rw [hy]
     ring
+
+/-! ### `translate_to_base_point` (FRI decommit)
+
+Per index bit `i`, conditionally *subtract* the size-`2^(i+1)` subgroup
+generator: lane-wise, add the conjugate generator power. The loop is the
+conjugate twin of `buildLoop`. -/
+
+def transStep (bit : SimdReg) (i count len : ℕ) (point : PointSimd) (n : ℕ) :
+    Out PointSimd :=
+  let gen := genPointSimd i count len n
+  let pib := subPointsSimd point gen.res gen.next
+  let sx := simdSelect bit point.x pib.res.x pib.next
+  let sy := simdSelect bit point.y pib.res.y sx.next
+  ⟨gen.ops ++ pib.ops ++ sx.ops ++ sy.ops, ⟨sx.res, sy.res⟩, sy.next⟩
+
+theorem transStep_shape {bit : SimdReg} {i count len n : ℕ} {point : PointSimd}
+    (hb : BitShape bit len count) (hp : point.Shape len count) :
+    (transStep bit i count len point n).res.Shape len count := by
+  obtain ⟨hblen, hbdata⟩ := hb
+  have hps := hp
+  obtain ⟨hlx, hly, hdx, hdy, hc⟩ := hp
+  have hpib : (subPointsSimd point (genPointSimd i count len n).res
+      (genPointSimd i count len n).next).res.Shape len count :=
+    subPointsSimd_shape hps (genPointSimd_shape (by omega))
+  obtain ⟨plx, ply, pdx, pdy, -⟩ := hpib
+  refine ⟨by show point.x.len = len; exact hlx,
+    by show point.y.len = len; exact hly, ?_, ?_, hc⟩
+  · rw [show (transStep bit i count len point n).res.x
+      = (simdSelect bit point.x (subPointsSimd point
+          (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x
+          (subPointsSimd point (genPointSimd i count len n).res
+            (genPointSimd i count len n).next).next).res from rfl,
+      simdSelect_data_len]
+    omega
+  · rw [show (transStep bit i count len point n).res.y
+      = (simdSelect bit point.y (subPointsSimd point
+          (genPointSimd i count len n).res (genPointSimd i count len n).next).res.y
+          (simdSelect bit point.x (subPointsSimd point
+            (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x
+            (subPointsSimd point (genPointSimd i count len n).res
+              (genPointSimd i count len n).next).next).next).res from rfl,
+      simdSelect_data_len]
+    omega
+
+theorem transStep_lane {ρ : ℕ → QM31} {bit : SimdReg} {i count len n : ℕ}
+    {point : PointSimd}
+    (hb : BitShape bit len count) (hp : point.Shape len count)
+    (h : AllHold ρ (transStep bit i count len point n).ops)
+    (j : ℕ) (hj : j < len)
+    (hbit : SimdReg.lane ρ bit j = 0 ∨ SimdReg.lane ρ bit j = 1) :
+    PointSimd.lane ρ (transStep bit i count len point n).res j
+      = if SimdReg.lane ρ bit j = 0 then PointSimd.lane ρ point j
+        else (PointSimd.lane ρ point j).add ((subgroupGen i : PIdx).toPoint).conjugate := by
+  obtain ⟨hblen, hbdata⟩ := hb
+  have hps := hp
+  obtain ⟨hlx, hly, hdx, hdy, hc⟩ := hp
+  unfold transStep at h
+  rw [allHold_append, allHold_append, allHold_append] at h
+  obtain ⟨⟨⟨hgen, hpib⟩, hsx⟩, hsy⟩ := h
+  have hgshape : (genPointSimd i count len n).res.Shape len count :=
+    genPointSimd_shape (by omega)
+  have hpibshape : (subPointsSimd point (genPointSimd i count len n).res
+      (genPointSimd i count len n).next).res.Shape len count :=
+    subPointsSimd_shape hps hgshape
+  obtain ⟨plx, ply, pdx, pdy, -⟩ := hpibshape
+  have hj4 : j / 4 < count := by omega
+  have hgenlane := genPointSimd_lane hgen j hj4
+  have hpiblane := subPointsSimd_lane hps hgshape hpib j hj
+  have hselx : SelShape bit point.x (subPointsSimd point
+      (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x :=
+    ⟨by show bit.len ≤ 4 * bit.data.length; omega,
+     by show point.x.len ≤ 4 * point.x.data.length; omega,
+     by show _ ≤ 4 * _; omega,
+     by omega, by omega, by omega, by omega⟩
+  have hsely : SelShape bit point.y (subPointsSimd point
+      (genPointSimd i count len n).res (genPointSimd i count len n).next).res.y :=
+    ⟨by show bit.len ≤ 4 * bit.data.length; omega,
+     by show point.y.len ≤ 4 * point.y.data.length; omega,
+     by show _ ≤ 4 * _; omega,
+     by omega, by omega, by omega, by omega⟩
+  have hlx' := simdSelect_lane_bit hselx hsx j (by omega) hbit
+  have hly' := simdSelect_lane_bit hsely hsy j (by omega) hbit
+  rcases hbit with hb0 | hb1
+  · rw [if_pos hb0]
+    refine CPoint.ext' ?_ ?_
+    · show SimdReg.lane ρ (simdSelect bit point.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).next).res j = _
+      rw [hlx', if_pos hb0]
+      rfl
+    · show SimdReg.lane ρ (simdSelect bit point.y (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.y (simdSelect bit point.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).next).next).res j = _
+      rw [hly', if_pos hb0]
+      rfl
+  · rw [if_neg (by rw [hb1]; norm_num)]
+    have hne : ¬ SimdReg.lane ρ bit j = 0 := by rw [hb1]; norm_num
+    have hpibx : (PointSimd.lane ρ (subPointsSimd point (genPointSimd i count len n).res
+        (genPointSimd i count len n).next).res j).x
+        = ((PointSimd.lane ρ point j).add ((subgroupGen i : PIdx).toPoint).conjugate).x := by
+      rw [hpiblane, hgenlane]
+    have hpiby : (PointSimd.lane ρ (subPointsSimd point (genPointSimd i count len n).res
+        (genPointSimd i count len n).next).res j).y
+        = ((PointSimd.lane ρ point j).add ((subgroupGen i : PIdx).toPoint).conjugate).y := by
+      rw [hpiblane, hgenlane]
+    refine CPoint.ext' ?_ ?_
+    · show SimdReg.lane ρ (simdSelect bit point.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).next).res j = _
+      rw [hlx', if_neg hne]
+      exact hpibx
+    · show SimdReg.lane ρ (simdSelect bit point.y (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.y (simdSelect bit point.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).res.x (subPointsSimd point (genPointSimd i count len n).res (genPointSimd i count len n).next).next).next).res j = _
+      rw [hly', if_neg hne]
+      exact hpiby
+
+/-- `translate_to_base_point`: subtract `gen(startIdx + t)` for every set
+bit `t`. -/
+def transLoop (count len : ℕ) : List SimdReg → ℕ → PointSimd → ℕ → Out PointSimd
+  | [], _, point, n => ⟨[], point, n⟩
+  | bit :: rest, startIdx, point, n =>
+    let st := transStep bit startIdx count len point n
+    let r := transLoop count len rest (startIdx + 1) st.res st.next
+    ⟨st.ops ++ r.ops, r.res, r.next⟩
+
+theorem transLoop_lane {ρ : ℕ → QM31} {count len : ℕ} :
+    ∀ (bits : List SimdReg) (startIdx : ℕ) (point : PointSimd) (n : ℕ),
+      1 ≤ startIdx → startIdx + bits.length ≤ 31 →
+      (∀ b ∈ bits, BitShape b len count) →
+      point.Shape len count →
+      AllHold ρ (transLoop count len bits startIdx point n).ops →
+      (transLoop count len bits startIdx point n).res.Shape len count ∧
+      ∀ j, j < len →
+        (∀ b ∈ bits, SimdReg.lane ρ b j = 0 ∨ SimdReg.lane ρ b j = 1) →
+        PointSimd.lane ρ (transLoop count len bits startIdx point n).res j
+          = (PointSimd.lane ρ point j).add
+              (M31_CIRCLE_GEN.smul (∑ t ∈ Finset.range bits.length,
+                bitNat ρ (bits.getD t dummySimd) j * subgroupGen (startIdx + t))).conjugate := by
+  intro bits
+  induction bits with
+  | nil =>
+    intro startIdx point n _ _ _ hp _
+    refine ⟨hp, fun j hj _ => ?_⟩
+    show PointSimd.lane ρ point j = _
+    simp only [List.length_nil, Finset.range_zero, Finset.sum_empty, ← CPoint.mul_def]
+    rw [show CPoint.smul M31_CIRCLE_GEN 0 = (1 : PointF) from by
+      rw [CPoint.smul_eq_pow, pow_zero], CPoint.conj_one, mul_one]
+  | cons bit rest ih =>
+    intro startIdx point n hstart hbound hshapes hp h
+    rw [show (transLoop count len (bit :: rest) startIdx point n).ops =
+      (transStep bit startIdx count len point n).ops ++
+        (transLoop count len rest (startIdx + 1)
+          (transStep bit startIdx count len point n).res
+          (transStep bit startIdx count len point n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨hstep, hrest⟩ := h
+    have hbshape := hshapes bit List.mem_cons_self
+    have hstepshape : (transStep bit startIdx count len point n).res.Shape len count :=
+      transStep_shape hbshape hp
+    obtain ⟨ihshape, ihlane⟩ := ih (startIdx + 1)
+      (transStep bit startIdx count len point n).res
+      (transStep bit startIdx count len point n).next
+      (by omega) (by simp only [List.length_cons] at hbound; omega)
+      (fun b hb => hshapes b (List.mem_cons_of_mem _ hb)) hstepshape hrest
+    refine ⟨ihshape, fun j hj hbits => ?_⟩
+    have hbit := hbits bit List.mem_cons_self
+    have hsteplane := transStep_lane hbshape hp hstep j hj hbit
+    rw [show (transLoop count len (bit :: rest) startIdx point n).res
+      = (transLoop count len rest (startIdx + 1)
+          (transStep bit startIdx count len point n).res
+          (transStep bit startIdx count len point n).next).res from rfl,
+      ihlane j hj (fun b hb => hbits b (List.mem_cons_of_mem _ hb)), hsteplane]
+    have hsum : ∑ t ∈ Finset.range (bit :: rest).length,
+        bitNat ρ ((bit :: rest).getD t dummySimd) j * subgroupGen (startIdx + t)
+        = bitNat ρ bit j * subgroupGen startIdx +
+          ∑ t ∈ Finset.range rest.length,
+            bitNat ρ (rest.getD t dummySimd) j * subgroupGen (startIdx + 1 + t) := by
+      rw [List.length_cons, Finset.sum_range_succ']
+      simp only [List.getD_cons_succ, List.getD_cons_zero, Nat.add_zero]
+      rw [Nat.add_comm]
+      congr 1
+      exact Finset.sum_congr rfl fun t _ => by
+        congr 2
+        omega
+    rw [hsum, CPoint.smul_add_idx]
+    rw [show (M31_CIRCLE_GEN.smul (bitNat ρ bit j * subgroupGen startIdx)).add
+        (M31_CIRCLE_GEN.smul (∑ t ∈ Finset.range rest.length,
+          bitNat ρ (rest.getD t dummySimd) j * subgroupGen (startIdx + 1 + t)))
+      = M31_CIRCLE_GEN.smul (bitNat ρ bit j * subgroupGen startIdx)
+        * M31_CIRCLE_GEN.smul (∑ t ∈ Finset.range rest.length,
+          bitNat ρ (rest.getD t dummySimd) j * subgroupGen (startIdx + 1 + t)) from rfl,
+      CPoint.conj_mul]
+    simp only [← CPoint.mul_def]
+    rcases hbit with hb0 | hb1
+    · rw [if_pos hb0,
+        show bitNat ρ bit j = 0 from by unfold bitNat; rw [if_pos hb0],
+        Nat.zero_mul,
+        show CPoint.smul M31_CIRCLE_GEN 0 = (1 : PointF) from by
+          rw [CPoint.smul_eq_pow, pow_zero],
+        CPoint.conj_one, one_mul]
+    · have hne : ¬ SimdReg.lane ρ bit j = 0 := by rw [hb1]; norm_num
+      rw [if_neg hne,
+        show bitNat ρ bit j = 1 from by unfold bitNat; rw [if_neg hne],
+        Nat.one_mul, toPoint_subgroupGen hstart (by
+          simp only [List.length_cons] at hbound; omega),
+        mul_assoc]
 
 end StwoVerifier.Gadgets

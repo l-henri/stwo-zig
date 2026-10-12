@@ -70,4 +70,22 @@ theorem repeatedDouble_eq_smul (p : CPoint α) (n : ℕ) :
     congr 1
     ring
 
+theorem conj_mul (p q : CPoint α) :
+    (p * q).conjugate = p.conjugate * q.conjugate := by
+  show (p.add q).conjugate = p.conjugate.add q.conjugate
+  unfold add conjugate
+  ext <;> simp <;> ring
+
+theorem conj_one : (1 : CPoint α).conjugate = 1 := by
+  show zero.conjugate = zero
+  unfold zero conjugate
+  ext <;> simp
+
+theorem conj_smul (p : CPoint α) (k : ℕ) :
+    (p.smul k).conjugate = p.conjugate.smul k := by
+  rw [smul_eq_pow, smul_eq_pow]
+  induction k with
+  | zero => simpa using conj_one
+  | succ k ih => rw [pow_succ, pow_succ, conj_mul, ih]
+
 end StwoVerifier.CPoint
