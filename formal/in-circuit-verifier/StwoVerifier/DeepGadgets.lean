@@ -199,6 +199,36 @@ theorem alphaChain_sound {ρ : ℕ → QM31} {alpha : ℕ} :
       rw [ih n (n + 1) hrest i (by omega), h1, pow_succ]
       ring
 
+/-- Wiring the alpha chain into the capstone: a response list whose
+coefficient registers are the chain's outputs satisfies the capstone's
+alpha hypothesis with `rsAlpha = [a0, a0·α, a0·α², …]`, where the
+interned start register carries `−2u·a0`. -/
+theorem chain_alphas {ρ : ℕ → QM31} {start alpha : ℕ} {a0 : QM31}
+    {k m : ℕ} {rsReg : List (ℕ × ℕ)}
+    (hstart : ρ start = (-2 : QM31) * Deep.uu * a0)
+    (hfst : rsReg.map Prod.fst = (alphaChain start alpha k m).res)
+    (hlen : rsReg.length = k)
+    (hch : AllHold ρ (alphaChain start alpha k m).ops) :
+    ∀ i, i < rsReg.length →
+      ρ (rsReg.getD i (0, 0)).1
+        = (-2 : QM31) * Deep.uu *
+            (((List.range k).map fun j => a0 * ρ alpha ^ j).getD i 0) := by
+  intro i hi
+  have h1 : (rsReg.getD i (0, 0)).1
+      = (alphaChain start alpha k m).res.getD i 0 := by
+    rw [← hfst]
+    conv_rhs => rw [List.getD_eq_getElem?_getD, List.getElem?_map,
+      List.getElem?_eq_getElem hi]
+    conv_lhs => rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]
+    rfl
+  have h2 : ((List.range k).map fun j => a0 * ρ alpha ^ j).getD i 0
+      = a0 * ρ alpha ^ i := by
+    rw [List.getD_eq_getElem?_getD, List.getElem?_map,
+      List.getElem?_eq_getElem (by simpa using (hlen ▸ hi))]
+    simp
+  rw [h1, alphaChain_sound k start m hch i (hlen ▸ hi), hstart, h2]
+  ring
+
 /-- The accumulate walk over one point's responses
 (`(α'ᵢ, Vᵢ)` register pairs): threads the `a`/`v` registers and records
 each response's coefficient register. -/
