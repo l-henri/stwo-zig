@@ -385,4 +385,32 @@ theorem friAnswers_eq_rows {ρ : ℕ → QM31} {zero : ℕ}
     rw [← hqd]
     simp only [Nat.zero_add]
 
+/-- **`Bound` is discharged by the gates.** A group whose registers come
+out of `groupSetup` (its `AllHold`), whose response registers carry the
+`−2u`-scaled batch random coefficients (what `chain_alphas` provides
+from the global alpha chain) and the batch sample values, and whose
+query-value registers carry the queried column values, is `Bound`. -/
+theorem bound_of_groupSetup {ρ : ℕ → QM31} {imMask zero px py n : ℕ}
+    {rsReg : List (ℕ × ℕ)} {valRegs : List ℕ}
+    {batch : Quotients.SampleBatch} {flatCols : List (List F)} {row : ℕ}
+    (hmask : ρ imMask = QM31.fromM31s 0 0 1 1) (hzero : ρ zero = 0)
+    (hpx : ρ px = batch.point.x) (hpy : ρ py = batch.point.y)
+    (hsetup : AllHold ρ (groupSetup imMask zero px py rsReg n).ops)
+    (hlenV : valRegs.length = rsReg.length)
+    (hlenE : rsReg.length = batch.entries.length)
+    (halpha : ∀ i, i < rsReg.length →
+      ρ (rsReg.getD i (0, 0)).1
+        = (-2 : QM31) * Deep.uu * (batch.entries.getD i default).randomCoeff)
+    (hV : ∀ i, i < rsReg.length →
+      ρ (rsReg.getD i (0, 0)).2 = (batch.entries.getD i default).sampleValue)
+    (hvals : ∀ i, i < rsReg.length →
+      ρ (valRegs.getD i 0)
+        = QM31.fromBase ((flatCols.getD
+            (batch.entries.getD i default).columnIndex []).getD row 0)) :
+    Bound ρ flatCols row
+      ⟨(groupSetup imMask zero px py rsReg n).res, valRegs, rsReg, batch⟩ := by
+  obtain ⟨hd, he, hf, hclen, hcoeff, haSum, hb⟩ :=
+    groupSetup_sound hmask hzero hpx hpy hsetup
+  exact ⟨hd, he, hf, hclen, hcoeff, haSum, hb, hlenV, hlenE, halpha, hV, hvals⟩
+
 end StwoVerifier.Gadgets
