@@ -40,16 +40,23 @@ and requires accept/reject to agree.
 
 Status (2026-10-12):
 
-- **PCS level**: 180 of 180 cases agree across PoW 0 / 8 / 26 vector sets —
-  and not only the accept/reject bit: the exact error code matches on every
-  case (`vectors_pow{0,8,26}.json`).
+- **PCS level**: all cases agree across PoW 0 / 8 / 26 vector sets —
+  and at PoW 8/26 not only the accept/reject bit: the exact error code
+  matches (`vectors_pow{0,8,26}.json`). The PoW-0 sets add structural
+  mutations (dropped/duplicated FRI layer, over-long last layer); the
+  duplicated-layer case confirms the one documented spec deviation is
+  verdict-invisible (the native verifier accepts an extra zero-fold layer
+  at commit and rejects in decommit; the spec rejects at commit).
 - **Statement level** (`NativeAccepts` end to end, with a one-constraint
   constant-composition mock AIR, proved by the engine's `proveEx` and
   natively verified by `core.verifier.verify`): 60 of 60 cases agree at
   PoW 0, including `OodsNotMatching` paths and the full-query-coverage edge
   case where a PoW-nonce flip at `pow_bits = 0` is *correctly accepted*
-  (every leaf is opened, so the verdict is query-independent); 180 of 180
-  across PoW 0 / 8 / 26 (`statement_pow{0,8,26}.json`).
+  (every leaf is opened, so the verdict is query-independent); all cases
+  agree across PoW 0 / 8 / 26 (`statement_pow{0,8,26}.json`).
+- The live corpus is 366 cases (two 63-case PoW-0 sets with the
+  structural battery, four 60-case sets), re-validated in full after the
+  spec's loops were refactored to pure recursions.
 - The compile-time `#guard` vectors additionally pin the channel law
   (mixes, draws, Merkle-root absorption, FriConfigV2 transcript, PoW
   accept/reject at Rust Stwo's grind nonces) to upstream bytes.

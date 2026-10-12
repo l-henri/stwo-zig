@@ -16,12 +16,17 @@ parameterized by an abstract `Air`, sitting on executable specs of the
 whole stack (channel, Merkle, FRI, DEEP quotients, PCS — see README table).
 Fidelity is differential, as the brief prescribes:
 
-- 360 of 360 mutation cases agree with the native Zig verifier —
-  180 PCS-level (`CommitmentSchemeVerifier.verifyValues`) and 180
-  statement-level (`core.verifier.verify` with a mock constant-composition
-  AIR proved by the in-repo CPU prover), each at PoW 0 / 8 / 26 with a
-  fixed 11-mutation battery plus 48 seeded random corruptions. Not just
-  accept/reject: the **error code** agrees on every case.
+- 366 of 366 mutation cases agree with the native Zig verifier —
+  PCS-level (`CommitmentSchemeVerifier.verifyValues`) and statement-level
+  (`core.verifier.verify` with a mock constant-composition AIR proved by
+  the in-repo CPU prover), each at PoW 0 / 8 / 26, with a fixed mutation
+  battery (including dropped/duplicated FRI layers and an over-long last
+  layer) plus 48 seeded random corruptions per set. At PoW 8/26 the
+  **error code** agrees too; the duplicated-layer case confirms the one
+  documented deviation (commit-time vs decommit-time rejection of extra
+  zero-fold layers) is verdict-invisible. The corpus was re-validated in
+  full after the spec's loops were refactored into pure recursions for
+  provability.
 - Compile-time `#guard` vectors pin the channel law to Rust-oracle bytes
   (digests for `mix_u64`/`mix_u32s`/`mix_felts`/`mix_hash`, the
   `FriConfigV2` transcript mix on both channel variants, secure draws,
