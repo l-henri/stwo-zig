@@ -24,3 +24,4 @@ import StwoVerifier.FriGadgets
 import StwoVerifier.SelectByIndex
 import StwoVerifier.SpecLemmas
 import StwoVerifier.DeepGadgets
+import StwoVerifier.DenNonzero

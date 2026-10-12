@@ -122,10 +122,14 @@ outstanding mechanical work, not new mathematics.
   and the guard lemmas `prodChain_all_ne_zero` + `den_nonzero_of_reg`
   (the single `inv(prod)` gate forces each chained register nonzero).
   The emitter's product is over the `d = im(P.y)` registers, so what the
-  gates provide is `im(P.y) ≠ 0` per sample point; the remaining
-  mathematical step — `im(P.y) ≠ 0` at an on-circle `P` forces the spec
-  denominator nonzero at every M31 domain point (circle ∩ line ≤ 2
-  points, both non-real) — is stated work, not yet a theorem.
+  gates provide is `im(P.y) ≠ 0` per sample point; the mathematical step
+  from there is **`den_nonzero`** (`DenNonzero.lean`): at an on-circle
+  `P` with `im(P.y) ≠ 0`, the spec denominator is nonzero at every M31
+  circle point — the conjugate line meets the circle only at `P` and
+  `P̄` (a quadratic with three distinct roots is identically zero, which
+  forces `im(P.y) = 0`). Together with `prodChain_all_ne_zero`, the
+  capstone's `hden` hypothesis is fully discharged from gates — the
+  open-question-1 mechanism is now a theorem end to end.
 - `lastLayerEqs_spec` (`FriGadgets.lean`): the decommit's closing `eq`
   battery holding is exactly `Fri.lastLayerCheck` succeeding at the
   pinned last-layer degree bound 0.
