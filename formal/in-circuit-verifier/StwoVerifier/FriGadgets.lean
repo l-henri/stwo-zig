@@ -15,6 +15,7 @@ import StwoVerifier.Fri
 import StwoVerifier.FieldTower
 import StwoVerifier.DeepIdentity
 import StwoVerifier.SpecLemmas
+import StwoVerifier.SimdGadgets
 
 namespace StwoVerifier.Gadgets
 
@@ -116,5 +117,69 @@ theorem lastLayerEqs_spec {ρ : ℕ → QM31} {coeff n : ℕ} {vals : List ℕ}
   intro e he
   obtain ⟨v, hv, rfl⟩ := List.mem_map.mp he
   rw [lastLayerEqs_sound h v hv, hc]
+
+/-- The `c`-th unit lane vector (`builder/simd.zig` `unit_vecs`). -/
+def unitVec : Nat → QM31
+  | 0 => QM31.fromM31s 1 0 0 0
+  | 1 => QM31.fromM31s 0 1 0 0
+  | 2 => QM31.fromM31s 0 0 1 0
+  | _ => QM31.fromM31s 0 0 0 1
+
+theorem unitVec_ne_zero (c : Nat) (hc : c < 4) : unitVec c ≠ 0 := by
+  interval_cases c <;> intro h
+  · have h1 : (1 : F) = 0 := congrArg CM31.a (congrArg QM31.c0 h)
+    exact absurd h1 (by norm_num)
+  · have h1 : (1 : F) = 0 := congrArg CM31.b (congrArg QM31.c0 h)
+    exact absurd h1 (by norm_num)
+  · have h1 : (1 : F) = 0 := congrArg CM31.a (congrArg QM31.c1 h)
+    exact absurd h1 (by norm_num)
+  · have h1 : (1 : F) = 0 := congrArg CM31.b (congrArg QM31.c1 h)
+    exact absurd h1 (by norm_num)
+
+/-- `pmul` with a unit vector picks out one lane:
+`x .* e_c = fromBase (coord x c) · e_c`. -/
+theorem pmul_unitVec (x : QM31) (c : Nat) (hc : c < 4) :
+    Gates.pmulQ x (unitVec c) = QM31.fromBase (coord x c) * unitVec c := by
+  interval_cases c <;>
+    (refine QM31.ext' ?_ ?_ <;> show _ = _ <;>
+      simp [Gates.pmulQ, unitVec, coord, QM31.fromBase, CM31.fromBase,
+        QM31.fromM31s, QM31.mul_c0, QM31.mul_c1, QM31.R] <;>
+      ext <;> simp [CM31.mul_a, CM31.mul_b] <;> ring)
+
+/-- `unpack_idx` (`builder/simd.zig`): one lane of a SIMD wire as a
+scalar register — pointwise-multiply by the unit vector, then divide the
+lane back into base position by the interned inverse. -/
+noncomputable def unpackIdx (w : ℕ) (c : Nat) (n : ℕ) : Out ℕ :=
+  if c = 0 then
+    ⟨[.const n (unitVec 0), .pmul (n + 1) w n], n + 1, n + 2⟩
+  else
+    ⟨[.const n (unitVec c), .pmul (n + 1) w n,
+      .const (n + 2) (unitVec c)⁻¹, .mul (n + 3) (n + 1) (n + 2)],
+     n + 3, n + 4⟩
+
+/-- The unpacked register holds the base-field lift of the lane. -/
+theorem unpackIdx_sound {ρ : ℕ → QM31} {w c n : ℕ} (hc : c < 4)
+    (h : AllHold ρ (unpackIdx w c n).ops) :
+    ρ (unpackIdx w c n).res = QM31.fromBase (coord (ρ w) c) := by
+  by_cases h0 : c = 0
+  · subst h0
+    rw [show (unpackIdx w 0 n).ops
+      = .const n (unitVec 0) :: [.pmul (n + 1) w n] from rfl,
+      allHold_cons, allHold_cons] at h
+    obtain ⟨h1, h2, -⟩ := h
+    simp only [Holds] at h1 h2
+    show ρ (n + 1) = _
+    rw [h2, h1, pmul_unitVec _ 0 (by omega),
+      show unitVec 0 = 1 from rfl, mul_one]
+  · rw [show (unpackIdx w c n).ops
+      = .const n (unitVec c) :: .pmul (n + 1) w n ::
+        .const (n + 2) (unitVec c)⁻¹ :: [.mul (n + 3) (n + 1) (n + 2)] from by
+          simp [unpackIdx, h0],
+      allHold_cons, allHold_cons, allHold_cons, allHold_cons] at h
+    obtain ⟨h1, h2, h3, h4, -⟩ := h
+    simp only [Holds] at h1 h2 h3 h4
+    have hres : (unpackIdx w c n).res = n + 3 := by simp [unpackIdx, h0]
+    rw [hres, h4, h2, h3, h1, pmul_unitVec _ c hc, mul_assoc,
+      mul_inv_cancel₀ (unitVec_ne_zero c hc), mul_one]
 
 end StwoVerifier.Gadgets
