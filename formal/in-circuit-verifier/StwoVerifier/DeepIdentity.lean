@@ -102,12 +102,12 @@ theorem den_identity (P : PointQ) (xq yq : F) :
 `α' = −2u·α`, the circuit accumulates
 `α'·(im V·y_q + d·V − im V·P.y − d·val)` while the spec's line
 coefficients give `α·(c·val − a·y_q − b)`; the two differ by `−u`. -/
-theorem num_identity (P : PointQ) (V alpha : QM31) (valM yq : F) :
+theorem num_identity (P : PointQ) (V alpha valQ Yq : QM31) :
     ((-2 : QM31) * uu * alpha) *
-        (imQ V * QM31.fromBase yq + (imQ P.y * V - imQ V * P.y)
-          - imQ P.y * QM31.fromBase valM)
-      = -uu * (alpha * (P.y.complexConjugate - P.y) * QM31.fromBase valM
-          - (alpha * (V.complexConjugate - V) * QM31.fromBase yq
+        (imQ V * Yq + (imQ P.y * V - imQ V * P.y)
+          - imQ P.y * valQ)
+      = -uu * (alpha * (P.y.complexConjugate - P.y) * valQ
+          - (alpha * (V.complexConjugate - V) * Yq
             + (alpha * (V * (P.y.complexConjugate - P.y))
               - alpha * ((V.complexConjugate - V) * P.y)))) := by
   rw [conj_eq_sub_two_im P.y, conj_eq_sub_two_im V]
@@ -139,9 +139,51 @@ theorem deep_term_eq (P : PointQ) (V alpha : QM31) (valM yq xq : F)
             + (alpha * (V * (P.y.complexConjugate - P.y))
               - alpha * ((V.complexConjugate - V) * P.y)))).mulCM31
           (Quotients.denominator P ⟨xq, yq⟩)⁻¹ := by
-  rw [num_identity P V alpha valM yq, den_identity P xq yq,
+  rw [num_identity P V alpha (QM31.fromBase valM) (QM31.fromBase yq), den_identity P xq yq,
     mulCM31_eq, embed_inv]
   have hu : (-uu : QM31) ≠ 0 := neg_ne_zero.mpr uu_ne_zero
   rw [mul_div_mul_left _ _ hu, div_eq_mul_inv]
+
+/-! ### Batched responses
+
+The circuit accumulates `a_sum = Σ α'ᵢ·im Vᵢ`, `v_sum = Σ α'ᵢ·Vᵢ`,
+`b = d·v_sum − a_sum·P.y` and subtracts `Σ (d·α'ᵢ)·valᵢ`; regrouping,
+that is the sum of the per-response circuit numerators, so the batched
+numerator is `−u` times the spec batch's by `num_identity` termwise. -/
+
+/-- Regrouping the circuit's accumulated numerator into per-response
+terms. `rs` carries `(α'ᵢ, Vᵢ, valᵢ)`. -/
+theorem circuit_num_regroup (d Py Yq : QM31) (rs : List (QM31 × QM31 × QM31)) :
+    (rs.map fun r => r.1 * imQ r.2.1).sum * Yq
+      + (d * (rs.map fun r => r.1 * r.2.1).sum
+        - (rs.map fun r => r.1 * imQ r.2.1).sum * Py)
+      - (rs.map fun r => d * r.1 * r.2.2).sum
+    = (rs.map fun r =>
+        r.1 * (imQ r.2.1 * Yq + (d * r.2.1 - imQ r.2.1 * Py) - d * r.2.2)).sum := by
+  induction rs with
+  | nil => simp
+  | cons r rs ih =>
+    simp only [List.map_cons, List.sum_cons]
+    linear_combination ih
+
+/-- The batched numerator identity: with every `α'ᵢ = −2u·αᵢ`, the
+accumulated circuit numerator is `−u` times the spec batch numerator. -/
+theorem num_identity_batched (P : PointQ) (Yq : QM31)
+    (rs : List (QM31 × QM31 × QM31)) :
+    ((rs.map fun r => ((-2 : QM31) * uu * r.1) * imQ r.2.1).sum * Yq
+      + (imQ P.y * (rs.map fun r => ((-2 : QM31) * uu * r.1) * r.2.1).sum
+        - (rs.map fun r => ((-2 : QM31) * uu * r.1) * imQ r.2.1).sum * P.y)
+      - (rs.map fun r => imQ P.y * ((-2 : QM31) * uu * r.1) * r.2.2).sum)
+    = -uu * (rs.map fun r =>
+        r.1 * (P.y.complexConjugate - P.y) * r.2.2
+          - (r.1 * (r.2.1.complexConjugate - r.2.1) * Yq
+            + (r.1 * (r.2.1 * (P.y.complexConjugate - P.y))
+              - r.1 * ((r.2.1.complexConjugate - r.2.1) * P.y)))).sum := by
+  induction rs with
+  | nil => simp
+  | cons r rs ih =>
+    simp only [List.map_cons, List.sum_cons]
+    have hhead := num_identity P r.2.1 r.1 r.2.2 Yq
+    linear_combination hhead + ih
 
 end StwoVerifier.Deep
