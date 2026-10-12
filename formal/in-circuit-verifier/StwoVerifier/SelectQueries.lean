@@ -455,6 +455,61 @@ theorem buildLoop_lane {ρ : ℕ → QM31} {count len : ℕ} :
           simp only [List.length_cons] at hbound; omega),
         mul_assoc]
 
+/-! ### `Simd::inv` -/
+
+/-- `simd.inv`: guessed inverse wires, `res ⊙ a`, and `Simd::eq` against a
+constant-splat one. Proves every lane of `a` nonzero. -/
+def simdInv (zero : ℕ) (a : SimdReg) (n : ℕ) : Out SimdReg :=
+  let g := guessWires a.data.length a.len n
+  let prod := simdMul g.res a g.next
+  let ones := constSplat 1 a.data.length a.len prod.next
+  let eqo := simdEq zero prod.res ones.res ones.next
+  ⟨g.ops ++ prod.ops ++ ones.ops ++ eqo.ops, g.res, eqo.next⟩
+
+theorem simdInv_covers {zero : ℕ} {a : SimdReg} {n : ℕ} (ha : a.Covers) :
+    (simdInv zero a n).res.Covers :=
+  guessWires_covers ha
+
+/-- Lane soundness: the guessed wire inverts the lane. -/
+theorem simdInv_lane {ρ : ℕ → QM31} {zero : ℕ} {a : SimdReg} {n : ℕ}
+    (hzero : ρ zero = 0) (ha : a.Covers)
+    (h : AllHold ρ (simdInv zero a n).ops) (j : ℕ) (hj : j < a.len) :
+    SimdReg.lane ρ (simdInv zero a n).res j * SimdReg.lane ρ a j = 1 := by
+  unfold simdInv at h
+  rw [allHold_append, allHold_append, allHold_append] at h
+  obtain ⟨⟨⟨_, hprod⟩, hones⟩, heqo⟩ := h
+  have hg : (guessWires a.data.length a.len n).res.Covers := guessWires_covers ha
+  have hgdata : (guessWires a.data.length a.len n).res.data.length
+      = a.data.length := by simp [guessWires]
+  have hpcov : (simdMul (guessWires a.data.length a.len n).res a
+      (guessWires a.data.length a.len n).next).res.Covers := by
+    show a.len ≤ 4 * _
+    rw [simdMul_data_len, hgdata]
+    have h4 : a.len ≤ 4 * a.data.length := ha
+    omega
+  have hj4 : j / 4 < a.data.length := by
+    have h4 : a.len ≤ 4 * a.data.length := ha
+    omega
+  have honeslane : SimdReg.lane ρ (constSplat 1 a.data.length a.len
+      (simdMul (guessWires a.data.length a.len n).res a
+        (guessWires a.data.length a.len n).next).next).res j = 1 :=
+    constSplat_lane hones j hj4
+  have honesdata : (constSplat 1 a.data.length a.len
+      (simdMul (guessWires a.data.length a.len n).res a
+        (guessWires a.data.length a.len n).next).next).res.data.length
+      = a.data.length := by simp [constSplat]
+  have heqlane := simdEq_sound hzero (by exact hpcov) (by
+    show a.len ≤ 4 * _
+    rw [honesdata]
+    exact ha) heqo j hj
+  have hmlane := simdMul_lane hg (by
+    show (guessWires a.data.length a.len n).res.len ≤ 4 * a.data.length
+    exact ha) hprod j hj
+  rw [hmlane] at heqlane
+  show SimdReg.lane ρ (guessWires a.data.length a.len n).res j
+    * SimdReg.lane ρ a j = 1
+  exact heqlane.trans honeslane
+
 /-! ### Shapes of the extraction outputs -/
 
 theorem rounds_shapes {zero invTwo : ℕ} :
