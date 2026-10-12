@@ -21,3 +21,4 @@ import StwoVerifier.OodsGadgets
 import StwoVerifier.FieldTower
 import StwoVerifier.DeepIdentity
 import StwoVerifier.FriGadgets
+import StwoVerifier.SelectByIndex
