@@ -172,12 +172,19 @@ outstanding mechanical work, not new mathematics.
   decommit side: the in-circuit Blake2s Merkle path gadget (ties the
   witness cosets to the layer roots; the per-query/no-dedup vs the
   spec's dedup'd-subset structure is Merkle-binding — scope-C
-  territory), and the twiddle-provenance chain
-  (`translate_to_base_point` → `simd.inv`, each proven, their
-  assembly).
+  territory). The twiddle-provenance chain is now assembled
+  (`TwiddleChain.lean`): `twiddleChain1_sound` — every per-layer
+  twiddle register gate-inverts its layer's fold coordinate, the
+  conjugate-selected query point's `y` for the circle layer and the
+  translated/doubled `baseSeq` points' `x`s for the line layers — the
+  exact `htws` hypotheses of `friLayers1_sound`. What remains there is
+  the index bridge from `baseSeq` to the spec's per-layer
+  `foldLineSubset` fold points (`SelectQueriesBridge`-style index
+  algebra).
 
-**Remaining**: `Bound`/twiddle provenance plumbing above, the circuit
-Blake2s Merkle gadget, and the channel-draw port. The spec's imperative loops have been refactored into pure
+**Remaining**: the `baseSeq`-to-spec-domain index bridge and response
+register provenance above, the circuit Blake2s Merkle gadget, and the
+channel-draw port. The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially, including `Fri.commitInner`), so
 the assemblies can be proven against them directly; `SpecLemmas.lean`
 starts that layer: at last-layer degree bound 0 the spec's final check is
