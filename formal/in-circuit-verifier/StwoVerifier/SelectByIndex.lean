@@ -161,4 +161,25 @@ theorem selectByIndexG_sound {ρ : ℕ → QM31} {one : ℕ} (hone : ρ one = 1)
     · rw [if_neg (by rw [hb]; exact qone_ne_zero), if_neg (by rw [hb]; exact qone_ne_zero),
         show (1 : ℕ) + 2 * idxOf ρ bits = 2 * idxOf ρ bits + 1 from by omega]
 
+/-- `validate_query_position_in_coset`, one query: the mux over the
+witness coset, then an `eq` gate against the claimed layer value. -/
+def validateQueryInCoset (one : ℕ) (coset : List ℕ) (bits : List ℕ)
+    (layerValue n : ℕ) : Out Unit :=
+  let sel := selectByIndexG one coset bits n
+  ⟨sel.ops ++ [.eq layerValue sel.res], (), sel.next⟩
+
+/-- The claimed layer value is the coset entry the query bits select. -/
+theorem validateQueryInCoset_sound {ρ : ℕ → QM31} {one : ℕ}
+    {coset bits : List ℕ} {layerValue n : ℕ} (hone : ρ one = 1)
+    (hlen : coset.length = 2 ^ bits.length)
+    (hbits : ∀ b ∈ bits, ρ b = 0 ∨ ρ b = 1)
+    (h : AllHold ρ (validateQueryInCoset one coset bits layerValue n).ops) :
+    ρ layerValue = ρ (coset.getD (idxOf ρ bits) 0) := by
+  unfold validateQueryInCoset at h
+  rw [allHold_append, allHold_cons] at h
+  obtain ⟨hsel, heq, -⟩ := h
+  simp only [Holds] at heq
+  rw [heq]
+  exact selectByIndexG_sound hone bits coset n hlen hbits hsel
+
 end StwoVerifier.Gadgets
