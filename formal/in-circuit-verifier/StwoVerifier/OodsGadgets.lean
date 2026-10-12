@@ -13,6 +13,7 @@ the exact value `NativeAccepts` compares against the AIR evaluation.
 -/
 import StwoVerifier.CircleGadgets
 import StwoVerifier.Verifier
+import StwoVerifier.FieldTower
 
 namespace StwoVerifier.Gadgets
 
@@ -86,5 +87,86 @@ theorem extractExpectedCompositionEvalG_sound {ρ : ℕ → QM31} {one : ℕ}
   have hxv := cosetVanishing_sound hone (k - 2) _ hx
   show ρ _ = _
   rw [hadd, hmul, hxv, hl, hr]
+
+/-! ### Linking to the spec's chunk reconstruction
+
+`reconstructChunks` at the pinned split 1 is exactly
+`left + (repeatedDouble point (k−2)).x · right`; on the circle, the
+point-doubling x-coordinate is iterated `doubleX`, and the OODS point
+(the image of the rational map) is always on the circle. Together with
+`extractExpectedCompositionEvalG_sound` this ties the gadget to the
+value `NativeAccepts` checks. -/
+
+/-- The split-1 chunk reconstruction, explicitly. -/
+theorem reconstructChunks_two (l r : QM31) (p : PointQ) (k : ℕ) (hk : 2 ≤ k) :
+    reconstructChunks [l, r] p k 1
+      = some (l + (CPoint.repeatedDouble p (k - 1 + 1 - 2)).x * r) := by
+  unfold reconstructChunks
+  rw [if_neg (by simp; omega)]
+  simp [reconstructChunks.go, reconstructChunks.pair]
+
+/-- On-circle predicate for QM31 points. -/
+def OnCircleQ (p : PointQ) : Prop := p.x * p.x + p.y * p.y = 1
+
+theorem onCircleQ_double {p : PointQ} (hp : OnCircleQ p) : OnCircleQ p.double := by
+  unfold OnCircleQ at *
+  show (p.add p).x * (p.add p).x + (p.add p).y * (p.add p).y = 1
+  unfold CPoint.add
+  simp only
+  linear_combination (p.x * p.x + p.y * p.y + 1) * hp
+
+/-- On the circle, doubling's x-coordinate is `doubleX`. -/
+theorem double_x_onCircle {p : PointQ} (hp : OnCircleQ p) :
+    p.double.x = CPoint.doubleX p.x := by
+  unfold OnCircleQ at hp
+  show (p.add p).x = p.x * p.x + p.x * p.x - 1
+  unfold CPoint.add
+  simp only
+  linear_combination -hp
+
+theorem repeatedDouble_x_onCircle {p : PointQ} (hp : OnCircleQ p) :
+    ∀ n, (CPoint.repeatedDouble p n).x = CPoint.doubleX^[n] p.x := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+    have hcirc : ∀ m, OnCircleQ (CPoint.repeatedDouble p m) := by
+      intro m
+      induction m with
+      | zero => exact hp
+      | succ m ihm => exact onCircleQ_double ihm
+    show (CPoint.repeatedDouble p n).double.x = _
+    rw [double_x_onCircle (hcirc n), ih,
+      Function.iterate_succ_apply' CPoint.doubleX n p.x]
+
+/-- The OODS seed map lands on the circle. -/
+theorem securePoint_onCircle {t : QM31} {p : PointQ}
+    (h : securePointFromSeed t = some p) : OnCircleQ p := by
+  have h' : ((t.square + QM31.one).inv?).bind
+      (fun d => some (⟨(QM31.one - t.square) * d, (t + t) * d⟩ : PointQ))
+      = some p := h
+  cases hinv : (t.square + QM31.one).inv? with
+  | none => rw [hinv] at h'; simp at h'
+  | some d =>
+    rw [hinv] at h'
+    have h : (⟨(QM31.one - t.square) * d, (t + t) * d⟩ : PointQ) = p :=
+      Option.some.inj h'
+    obtain ⟨hne, hd⟩ := QM31.inv?_eq_some hinv
+    rw [← h]
+    unfold OnCircleQ QM31.square
+    show (QM31.one - t * t) * d * ((QM31.one - t * t) * d)
+      + (t + t) * d * ((t + t) * d) = 1
+    have hcancel : (t * t + 1) * d = 1 := by
+      rw [hd]
+      exact mul_inv_cancel₀ (by
+        intro h0
+        apply hne
+        rw [show t.square + QM31.one = t * t + 1 from rfl, h0])
+    calc (QM31.one - t * t) * d * ((QM31.one - t * t) * d)
+        + (t + t) * d * ((t + t) * d)
+        = ((t * t + 1) * d) * ((t * t + 1) * d) := by
+          rw [show (QM31.one : QM31) = 1 from rfl]
+          ring
+      _ = 1 := by rw [hcancel, mul_one]
 
 end StwoVerifier.Gadgets

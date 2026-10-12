@@ -142,5 +142,40 @@ noncomputable instance : Field QM31 where
   nnqsmul := _
   qsmul := _
 
+/-- The executable `inv?` agrees with the field inverse. -/
+theorem inv?_eq_some {x y : QM31} (h : x.inv? = some y) : x ≠ 0 ∧ y = x⁻¹ := by
+  cases hn : (x.c0 * x.c0 - R * (x.c1 * x.c1)).inv? with
+  | none => simp [QM31.inv?, hn] at h
+  | some di =>
+    simp [QM31.inv?, hn] at h
+    unfold CM31.inv? at hn
+    by_cases h0 : CM31.norm (x.c0 * x.c0 - R * (x.c1 * x.c1)) = 0
+    · rw [if_pos h0] at hn; simp at hn
+    · rw [if_neg h0] at hn
+      simp only [Option.some.injEq] at hn
+      -- The norm of `normQ x` is nonzero, so `normQ x ≠ 0`, so `x ≠ 0`.
+      have hnormQ : normQ x ≠ 0 := by
+        intro hz
+        apply h0
+        unfold normQ at hz
+        rw [hz]
+        unfold CM31.norm
+        simp
+      have hx : x ≠ 0 := fun hz => hnormQ (by rw [hz]; unfold normQ; simp)
+      refine ⟨hx, ?_⟩
+      -- `di` is the CM31 field inverse of `normQ x`.
+      have hdi : di = (normQ x)⁻¹ := by
+        rw [← hn]
+        show _ = (⟨(normQ x).a / CM31.norm2 (normQ x),
+          -(normQ x).b / CM31.norm2 (normQ x)⟩ : CM31)
+        unfold CM31.norm2 CM31.norm normQ
+        ext <;> simp [div_eq_mul_inv] <;> rfl
+      rw [← h, hdi]
+      refine QM31.ext' ?_ ?_
+      · show x.c0 * (normQ x)⁻¹ = x.c0 / normQ x
+        rw [div_eq_mul_inv]
+      · show -(x.c1 * (normQ x)⁻¹) = -x.c1 / normQ x
+        rw [neg_div, div_eq_mul_inv]
+
 end QM31
 end StwoVerifier
