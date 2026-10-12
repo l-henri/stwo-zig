@@ -98,11 +98,20 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     `selectQueriesPoint_sound`: per lane, the 31 extracted bits are the
     canonical digits of the drawn value, and the built point is
     `gen^(queryIndex bits L)`, conjugated exactly when bit 0 is set.
-- **Remaining for deliverable 2**: the pure-arithmetic bridge from
-  `queryIndex` to the spec's `CircleDomain.at'` indexing (the gadget's bit
-  weights `2^(31−i)` are the bit-reversed coset index — no gates involved),
-  and the channel-draw half of `select_queries`
-  (`getQuerySelectionInputFromChannel`). Then FRI/DEEP gadgets, scope B/C.
+  - **the bridge to the spec** (`SelectQueriesBridge.lean`): the circle
+    generator is on the circle with order `2³¹` (kernel-checked), `toPoint`
+    is additive and sends negated indices to conjugates, and
+    `queryIndex_eq_domainPoint` equates the gadget's point with
+    `(canonicDomain L).at' (bitReverseIndex pos L)` — the very point the
+    differentially-validated `Quotients.friAnswers` evaluates;
+  - **deliverable 3 started** (`OodsGadgets.lean`): `from_partial_evals`
+    and `extract_expected_composition_eval` proven to compute the spec's
+    extension-basis recombination and split-1 chunk reconstruction.
+- **Remaining**: the channel-draw half of `select_queries`
+  (`getQuerySelectionInputFromChannel`; its transcript law is proven in
+  starked-bitcoin's `Circuit/Channel.lean` for the same builder), the DEEP
+  quotient batching (`compute_fri_input`) and FRI gadgets (deliverable 4),
+  scope B/C.
 
 ## Deviations from Zig noted while specifying
 

@@ -17,3 +17,4 @@ import StwoVerifier.CircleGadgets
 import StwoVerifier.SimdGadgets
 import StwoVerifier.SelectQueries
 import StwoVerifier.SelectQueriesBridge
+import StwoVerifier.OodsGadgets
