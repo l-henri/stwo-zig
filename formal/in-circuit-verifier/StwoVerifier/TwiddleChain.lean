@@ -550,4 +550,41 @@ theorem twiddleChain1_sound {ρ : ℕ → QM31} {zero count len : ℕ}
               (bits.map fun b => bitNat ρ b j)) from by rw [hb0lane]]
       exact this
 
+/-! ### The circle layer's fold point -/
+
+theorem conj_conj (p : PointF) : p.conjugate.conjugate = p := by
+  unfold CPoint.conjugate
+  refine CPoint.ext' rfl ?_
+  show -(-p.y) = p.y
+  ring
+
+/-- **Un-conjugating by bit 0 lands on the even position's point**: the
+decommit's circle base point is the spec's `foldCircleSubset` point of
+the query's width-2 subset (its start = the position with bit 0
+cleared). `queryIndex` does not involve bit 0, so both sides are the
+same generator power. -/
+theorem base0_eq_evenPoint {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L : ℕ}
+    (hL2 : 2 ≤ L) (hL30 : L ≤ 30) :
+    (if b 0 = 0
+     then (canonicDomain L).at'
+       (bitReverseIndex (∑ i ∈ Finset.range L, b i * 2 ^ i) L)
+     else ((canonicDomain L).at'
+       (bitReverseIndex (∑ i ∈ Finset.range L, b i * 2 ^ i) L)).conjugate)
+      = (canonicDomain L).at' (bitReverseIndex
+          (∑ i ∈ Finset.range L, (if i = 0 then 0 else b i) * 2 ^ i) L) := by
+  have hb' : ∀ i, (if i = 0 then 0 else b i) ≤ 1 := by
+    intro i
+    by_cases h0 : i = 0 <;> simp [h0, hb i]
+  have hqi : queryIndex (fun i => if i = 0 then 0 else b i) L
+      = queryIndex b L := by
+    unfold queryIndex
+    congr 1
+  have hmain := Bridge.queryIndex_eq_domainPoint hb hL2 hL30
+  have hmain' := Bridge.queryIndex_eq_domainPoint hb' hL2 hL30
+  simp only [reduceIte] at hmain'
+  rw [hqi] at hmain'
+  by_cases h0 : b 0 = 0
+  · rw [if_pos h0, ← hmain, if_pos h0, ← hmain']
+  · rw [if_neg h0, ← hmain, if_neg h0, conj_conj, ← hmain']
+
 end StwoVerifier.Gadgets
