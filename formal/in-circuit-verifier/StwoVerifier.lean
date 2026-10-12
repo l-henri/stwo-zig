@@ -18,3 +18,4 @@ import StwoVerifier.SimdGadgets
 import StwoVerifier.SelectQueries
 import StwoVerifier.SelectQueriesBridge
 import StwoVerifier.OodsGadgets
+import StwoVerifier.FieldTower
