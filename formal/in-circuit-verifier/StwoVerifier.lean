@@ -16,3 +16,4 @@ import StwoVerifier.BitDecomp
 import StwoVerifier.CircleGadgets
 import StwoVerifier.SimdGadgets
 import StwoVerifier.SelectQueries
+import StwoVerifier.SelectQueriesBridge
