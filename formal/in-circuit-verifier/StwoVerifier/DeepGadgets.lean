@@ -476,4 +476,60 @@ theorem processGroupQuery_sound {ρ : ℕ → QM31}
   rw [hfinal, mul_div_mul_left _ _ (neg_ne_zero.mpr Deep.uu_ne_zero),
     div_eq_mul_inv, ← Deep.embed_inv, ← Deep.mulCM31_eq]
 
+/-- The denominator guard: multiply all denominator registers into one
+product register, then a single `inv` gate. -/
+def prodChain (first : ℕ) : List ℕ → ℕ → Out ℕ
+  | [], n => ⟨[], first, n⟩
+  | r :: rest, n =>
+    let t := prodChain n rest (n + 1)
+    ⟨.mul n first r :: t.ops, t.res, t.next⟩
+
+theorem prodChain_sound {ρ : ℕ → QM31} :
+    ∀ (rs : List ℕ) (first n : ℕ),
+      AllHold ρ (prodChain first rs n).ops →
+      ρ (prodChain first rs n).res = ρ first * (rs.map ρ).prod := by
+  intro rs
+  induction rs with
+  | nil => intro first n _; simp [prodChain]
+  | cons r rest ih =>
+    intro first n h
+    rw [show (prodChain first (r :: rest) n).ops
+      = .mul n first r :: (prodChain n rest (n + 1)).ops from rfl,
+      allHold_cons] at h
+    obtain ⟨h1, hrest⟩ := h
+    simp only [Holds] at h1
+    show ρ (prodChain n rest (n + 1)).res = _
+    rw [ih n (n + 1) hrest, h1]
+    simp only [List.map_cons, List.prod_cons]
+    ring
+
+/-- An `inv` gate's input is nonzero. -/
+theorem inv_gate_ne_zero {ρ : ℕ → QM31} {o x : ℕ}
+    (h : Holds ρ (.inv o x)) : ρ x ≠ 0 := by
+  simp only [Holds] at h
+  exact left_ne_zero_of_mul_eq_one h
+
+/-- The guard's force: with the `inv` gate on the chained product, every
+chained register is nonzero. -/
+theorem prodChain_all_ne_zero {ρ : ℕ → QM31} {rs : List ℕ}
+    {first n o : ℕ}
+    (hchain : AllHold ρ (prodChain first rs n).ops)
+    (hinv : Holds ρ (.inv o (prodChain first rs n).res)) :
+    ρ first ≠ 0 ∧ ∀ r ∈ rs, ρ r ≠ 0 := by
+  have hne : ρ (prodChain first rs n).res ≠ 0 := inv_gate_ne_zero hinv
+  rw [prodChain_sound rs first n hchain] at hne
+  refine ⟨left_ne_zero_of_mul hne, fun r hr hzero => ?_⟩
+  apply right_ne_zero_of_mul hne
+  exact List.prod_eq_zero (List.mem_map.mpr ⟨r, hr, hzero⟩)
+
+/-- Discharging the capstone's denominator hypothesis: a denominator
+register carrying `−u·embed(den)` (as `den_identity` provides) that the
+guard proves nonzero forces the spec denominator nonzero. -/
+theorem den_nonzero_of_reg {ρ : ℕ → QM31} {reg : ℕ} {den : CM31}
+    (hreg : ρ reg = -Deep.uu * Deep.embed den) (hne : ρ reg ≠ 0) :
+    den ≠ 0 := by
+  rintro rfl
+  rw [hreg, Deep.embed_zero, mul_zero] at hne
+  exact hne rfl
+
 end StwoVerifier.Gadgets
