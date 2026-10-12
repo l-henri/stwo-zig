@@ -45,6 +45,40 @@ def pushEntry (batches : List SampleBatch) (point : PointQ) (e : NumeratorData) 
     if b.point = point then ⟨b.point, b.entries ++ [e]⟩ :: rest
     else b :: pushEntry rest point e
 
+/-- The flat view of grouped batches: every `(point, entry)` pair. -/
+def flattenBatches (batches : List SampleBatch) : List (PointQ × NumeratorData) :=
+  batches.flatMap fun batch => batch.entries.map fun e => (batch.point, e)
+
+/-- `pushEntry` only moves the new pair to its bucket: the flat view is a
+permutation of consing it. Any sum over the samples is therefore
+independent of the grouping — the bridge between the spec's value-grouped
+batches and the circuit's register-grouped ones. -/
+theorem flattenBatches_pushEntry (batches : List SampleBatch)
+    (point : PointQ) (e : NumeratorData) :
+    (flattenBatches (pushEntry batches point e)).Perm
+      ((point, e) :: flattenBatches batches) := by
+  induction batches with
+  | nil => simp [flattenBatches, pushEntry]
+  | cons b rest ih =>
+    by_cases hp : b.point = point
+    · rw [show pushEntry (b :: rest) point e
+        = ⟨b.point, b.entries ++ [e]⟩ :: rest from by
+          simp only [pushEntry]; rw [if_pos hp]]
+      unfold flattenBatches
+      simp only [List.flatMap_cons, List.map_append, List.map_cons,
+        List.map_nil, hp]
+      have h1 : (List.map (fun x => (point, x)) b.entries ++ [(point, e)]).Perm
+          ((point, e) :: List.map (fun x => (point, x)) b.entries) :=
+        List.perm_append_comm
+      exact h1.append_right _
+    · rw [show pushEntry (b :: rest) point e
+        = b :: pushEntry rest point e from by
+          simp only [pushEntry]; rw [if_neg hp]]
+      unfold flattenBatches at ih ⊢
+      simp only [List.flatMap_cons]
+      refine ((ih.append_left _).trans ?_)
+      exact List.perm_middle
+
 /-- `buildColumnSampleBatchesFromParallelInputs`. Trees → columns → samples;
 `none` on shape mismatch. -/
 def buildSampleBatches (sampledPoints : List (List (List PointQ)))
