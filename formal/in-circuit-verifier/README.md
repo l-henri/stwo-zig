@@ -114,6 +114,11 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     `−2u`-scaled `im`-line form — equals the spec's complex-conjugate
     line-coefficient quotient (`deep_term_eq`: numerator and denominator
     are each `−u` times the spec's, and the factors cancel).
+  - **deliverable 4 started** (`FriGadgets.lean`): `fold_coset` at the
+    pinned fold step 1 proven to compute the spec's `Fri.foldLinePair` —
+    the gate-proven twiddle inverse pins `t = x⁻¹` in the QM31 field, and
+    the folded wire is the exact circle-to-line / line fold the verifier
+    spec runs.
 - **Remaining**: the channel-draw half of `select_queries`
   (`getQuerySelectionInputFromChannel`; its transcript law is proven in
   starked-bitcoin's `Circuit/Channel.lean` for the same builder), the DEEP
