@@ -9,3 +9,5 @@ import StwoVerifier.Fri
 import StwoVerifier.Quotients
 import StwoVerifier.Pcs
 import StwoVerifier.Verifier
+import StwoVerifier.Algebra
+import StwoVerifier.Gates

@@ -48,8 +48,8 @@ Status (2026-10-12):
   natively verified by `core.verifier.verify`): 60 of 60 cases agree at
   PoW 0, including `OodsNotMatching` paths and the full-query-coverage edge
   case where a PoW-nonce flip at `pow_bits = 0` is *correctly accepted*
-  (every leaf is opened, so the verdict is query-independent)
-  (`statement_pow{0,8,26}.json`; pow 8/26 runs pending at writing).
+  (every leaf is opened, so the verdict is query-independent); 180 of 180
+  across PoW 0 / 8 / 26 (`statement_pow{0,8,26}.json`).
 - The compile-time `#guard` vectors additionally pin the channel law
   (mixes, draws, Merkle-root absorption, FriConfigV2 transcript, PoW
   accept/reject at Rust Stwo's grind nonces) to upstream bytes.
@@ -73,8 +73,14 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
   composition-tree commit, OODS draw, chunk reconstruction, and the OODS
   equality check. The AIR itself stays an abstract `Air` record; scope B
   instantiates it with the circuit AIR.
-- **Not yet started**: the scope-A proofs (gadget gates ⇒ spec functions)
-  and scope B/C.
+- **Scope A started** (`Gates.lean`, `Algebra.lean`, `CircleGadgets.lean`):
+  the gate model (`Circuit::check` semantics), `CommRing` instances for the
+  concrete CM31/QM31, and proven soundness for the scalar circle gadgets —
+  `double_x`, `add_points`, `double_point` (with the explicit on-circle
+  hypothesis), `coset_vanishing_poly`, `denom_inverse` (standard axioms
+  only; `#print axioms` = propext, Classical.choice, Quot.sound).
+- **Not yet started**: the SIMD gadget layer (`extract_bits`, `select`,
+  packed lanes) needed for `select_queries`, FRI/DEEP gadgets, scope B/C.
 
 ## Deviations from Zig noted while specifying
 
