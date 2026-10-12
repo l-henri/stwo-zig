@@ -172,7 +172,7 @@ jobs:
   architecture-authority-macos:
     name: macos
     needs: architecture-authority-session
-    runs-on: macos-14
+    runs-on: macos-15
     environment: build-architecture-authority
     timeout-minutes: 90
     outputs:
