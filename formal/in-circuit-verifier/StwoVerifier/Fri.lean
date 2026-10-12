@@ -57,18 +57,25 @@ def commitInner (m31 : Bool) (config : FriConfig) :
     List FriLayerProof → Nat → LineDomain → Channel.St →
     Except VError (List (LineDomain × QM31 × FriLayerProof) × Nat × LineDomain × Channel.St)
   | [], bound, domain, s => .ok ([], bound, domain, s)
-  | p :: rest, bound, domain, s => do
-    let s' := Channel.mixRoot m31 s p.commitment
-    let (alpha, s'') ← match Channel.drawSecureFelt m31 s' with
-      | some r => pure r | none => throw .drawFuelExhausted
-    -- foldStepAt: min(fold_step, remaining); profile: always 1 until bound.
-    if bound < config.logLastLayerDegreeBound then throw .invalidNumFriLayers
-    let step := min config.foldStep (bound - config.logLastLayerDegreeBound)
-    if step = 0 then throw .invalidNumFriLayers
-    if bound < step then throw .invalidNumFriLayers
-    let (layers, bound', domain', sOut) ← commitInner m31 config rest
-      (bound - step) ((List.range step).foldl (fun d _ => d.double) domain) s''
-    return ((domain, alpha, p) :: layers, bound', domain', sOut)
+  | p :: rest, bound, domain, s =>
+    match Channel.drawSecureFelt m31 (Channel.mixRoot m31 s p.commitment) with
+    | none => .error .drawFuelExhausted
+    | some (alpha, s'') =>
+      -- foldStepAt: min(fold_step, remaining); profile: always 1 until bound.
+      if bound < config.logLastLayerDegreeBound then .error .invalidNumFriLayers
+      else if min config.foldStep (bound - config.logLastLayerDegreeBound) = 0 then
+        .error .invalidNumFriLayers
+      else if bound < min config.foldStep (bound - config.logLastLayerDegreeBound) then
+        .error .invalidNumFriLayers
+      else
+        match commitInner m31 config rest
+            (bound - min config.foldStep (bound - config.logLastLayerDegreeBound))
+            ((List.range (min config.foldStep
+              (bound - config.logLastLayerDegreeBound))).foldl
+              (fun d _ => d.double) domain) s'' with
+        | .error e => .error e
+        | .ok (layers, bound', domain', sOut) =>
+          .ok ((domain, alpha, p) :: layers, bound', domain', sOut)
 
 /-- `FriVerifier.commit`. Returns the committed state and the channel after
 the FRI transcript. `m31` selects the channel variant. -/

@@ -55,4 +55,47 @@ theorem lastLayerCheck_const (c : Fri.Committed) (c0 : QM31)
       rw [hpoly, linePolyEval_singleton]
       exact h pe.2 (List.of_mem_zip hmem).2
 
+/-- `commitInner` shape: on success, the committed layers pair the proof
+layers one-to-one in order, and the degree bound drops by the per-layer
+fold step — at the pinned fold step 1, by exactly one per layer. -/
+theorem commitInner_shape (m31 : Bool) (config : Fri.FriConfig)
+    (hfold : config.foldStep = 1) :
+    ∀ (ps : List Fri.FriLayerProof) (bound : Nat) (domain : LineDomain)
+      (s : Channel.St)
+      {layers : List (LineDomain × QM31 × Fri.FriLayerProof)}
+      {bound' : Nat} {domain' : LineDomain} {sOut : Channel.St},
+      Fri.commitInner m31 config ps bound domain s
+        = .ok (layers, bound', domain', sOut) →
+      layers.map (fun l => l.2.2) = ps ∧ bound' + ps.length = bound := by
+  intro ps
+  induction ps with
+  | nil =>
+    intro bound domain s layers bound' domain' sOut h
+    rw [Fri.commitInner] at h
+    simp only [Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨hl, hb, -, -⟩ := h
+    exact ⟨by rw [← hl]; rfl, by simpa using hb.symm⟩
+  | cons p rest ih =>
+    intro bound domain s layers bound' domain' sOut h
+    rw [Fri.commitInner] at h
+    split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · simp at h
+        · split at h
+          · simp at h
+          · split at h
+            · simp at h
+            · rename_i hrec
+              simp only [Except.ok.injEq, Prod.mk.injEq] at h
+              obtain ⟨hl, hb, -, -⟩ := h
+              obtain ⟨hmap, hbd⟩ := ih _ _ _ hrec
+              constructor
+              · rw [← hl]
+                simp [hmap]
+              · simp only [List.length_cons]
+                omega
+
 end StwoVerifier.SpecLemmas

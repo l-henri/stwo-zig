@@ -121,10 +121,14 @@ outstanding mechanical work, not new mathematics.
 queries, now a composition of `processGroupQuery_sound` instances) and
 the `fri_decommit` layer-loop assembly (loops + Merkle plumbing — the
 mathematics above is what they reduce to). The spec's imperative loops have been refactored into pure
-recursions (re-validated differentially), so the assemblies can be proven
-against them directly; `SpecLemmas.lean` starts that layer (at last-layer
-degree bound 0, the spec's final check is pointwise equality with the
-constant coefficient — the circuit's closing `eq` gates).
+recursions (re-validated differentially, including `Fri.commitInner`), so
+the assemblies can be proven against them directly; `SpecLemmas.lean`
+starts that layer: at last-layer degree bound 0 the spec's final check is
+pointwise equality with the constant coefficient (the circuit's closing
+`eq` gates), and `commitInner_shape` pins the commit walk's structure —
+on success the committed layers pair the proof layers one-to-one in
+order and, at the pinned fold step 1, the degree bound drops by exactly
+one per layer.
 
 ## Open questions (brief §7)
 
