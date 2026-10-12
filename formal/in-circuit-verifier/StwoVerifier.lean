@@ -22,3 +22,4 @@ import StwoVerifier.FieldTower
 import StwoVerifier.DeepIdentity
 import StwoVerifier.FriGadgets
 import StwoVerifier.SelectByIndex
+import StwoVerifier.SpecLemmas

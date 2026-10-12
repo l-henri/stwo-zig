@@ -104,8 +104,11 @@ outstanding mechanical work, not new mathematics.
 
 **Remaining**: the `compute_fri_input` and `fri_decommit` emitter
 assemblies (loops + Merkle plumbing — the mathematics above is what they
-reduce to), and a pure-functional restatement of the spec's `friAnswers`
-loops to prove against (the do-notation form is executable-first).
+reduce to). The spec's imperative loops have been refactored into pure
+recursions (re-validated differentially), so the assemblies can be proven
+against them directly; `SpecLemmas.lean` starts that layer (at last-layer
+degree bound 0, the spec's final check is pointwise equality with the
+constant coefficient — the circuit's closing `eq` gates).
 
 ## Open questions (brief §7)
 

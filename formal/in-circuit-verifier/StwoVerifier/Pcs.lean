@@ -83,8 +83,9 @@ tree/column counts must match; `EmptySampledSet` is swallowed. -/
 def shapeCheck (trees : List Tree) (sampledPoints : List (List (List PointQ)))
     : Except VError Unit := do
   if trees.length ≠ sampledPoints.length then throw .shapeMismatch
-  for (tree, points) in trees.zip sampledPoints do
-    if tree.columnLogSizes.length ≠ points.length then throw .shapeMismatch
+  if (trees.zip sampledPoints).any (fun (tree, points) =>
+      tree.columnLogSizes.length ≠ points.length) then
+    throw .shapeMismatch
 
 /-- `verifyValues`: the complete opening verification. Consumes the channel
 state right after the composition OODS check. -/
@@ -113,12 +114,12 @@ def verifyValues (m31 : Bool) (config : PcsConfig) (trees : List Tree)
     fri.columnCommitmentDomain.logSize config.nQueries s
   let unique := Merkle.sortedUnique raw
   -- Merkle verification per tree.
-  for ((tree, decommitment), queried) in
-      (trees.zip proof.decommitments).zip proof.queriedValues do
-    let treeLog : Option Nat := if tree.height = 0 then none else some tree.height
-    let positions := prepareTreePositions unique liftingLogSize treeLog
-    Merkle.verify tree.root tree.columnLogSizes tree.height positions
-      queried decommitment
+  let _ ← ((trees.zip proof.decommitments).zip proof.queriedValues).mapM
+    fun ((tree, decommitment), queried) =>
+      let treeLog : Option Nat := if tree.height = 0 then none else some tree.height
+      let positions := prepareTreePositions unique liftingLogSize treeLog
+      Merkle.verify tree.root tree.columnLogSizes tree.height positions
+        queried decommitment
   -- DEEP quotient answers at the unique positions, then FRI decommit.
   let answers ← Quotients.friAnswers (trees.map (·.columnLogSizes))
     sampledPoints proof.sampledValues deepRandomness unique

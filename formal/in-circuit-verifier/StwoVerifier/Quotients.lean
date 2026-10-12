@@ -79,38 +79,62 @@ theorem flattenBatches_pushEntry (batches : List SampleBatch)
       refine ((ih.append_left _).trans ?_)
       exact List.perm_middle
 
-/-- `buildColumnSampleBatchesFromParallelInputs`. Trees → columns → samples;
-`none` on shape mismatch. -/
+/-- The grouping state: batches so far, the next random power, and the
+flat column counter. -/
+structure BatchState where
+  batches : List SampleBatch
+  randomPow : QM31
+  flatColumn : Nat
+
+/-- Push one column's samples (periodicity duplicate first). -/
+def pushColumn (step : PointF) (randomCoeff : QM31) (st : BatchState)
+    (colPoints : List PointQ) (colValues : List QM31) (logSize : Nat) :
+    Except VError BatchState := do
+  if colPoints.length ≠ colValues.length then throw .shapeMismatch
+  let st ←
+    if colPoints.length = 2 then
+      -- Periodicity duplicate: second sample's point shifted by the
+      -- period generator `step^(2^logSize)`, second sample's value.
+      let periodic := (colPoints.getD 1 CPoint.zero).add
+        (PointF.intoQ (step.repeatedDouble logSize))
+      pure { st with
+        batches := pushEntry st.batches periodic
+          ⟨st.flatColumn, colValues.getD 1 QM31.zero, st.randomPow⟩
+        randomPow := st.randomPow * randomCoeff }
+    else pure st
+  let st := (colPoints.zip colValues).foldl (fun st (point, value) =>
+    { st with
+      batches := pushEntry st.batches point ⟨st.flatColumn, value, st.randomPow⟩
+      randomPow := st.randomPow * randomCoeff }) st
+  return { st with flatColumn := st.flatColumn + 1 }
+
+def pushTree (step : PointF) (randomCoeff : QM31) :
+    BatchState → List (List PointQ × List QM31 × Nat) → Except VError BatchState
+  | st, [] => .ok st
+  | st, (colPoints, colValues, logSize) :: rest => do
+    let st ← pushColumn step randomCoeff st colPoints colValues logSize
+    pushTree step randomCoeff st rest
+
+def pushTrees (step : PointF) (randomCoeff : QM31) :
+    BatchState → List (List (List PointQ) × List (List QM31) × List Nat) →
+    Except VError BatchState
+  | st, [] => .ok st
+  | st, (treePoints, treeValues, treeSizes) :: rest => do
+    if treePoints.length ≠ treeSizes.length ∨ treePoints.length ≠ treeValues.length then
+      throw .shapeMismatch
+    let st ← pushTree step randomCoeff st
+      (treePoints.zip (treeValues.zip treeSizes))
+    pushTrees step randomCoeff st rest
+
 def buildSampleBatches (sampledPoints : List (List (List PointQ)))
     (sampledValues : List (List (List QM31)))
     (columnLogSizes : List (List Nat)) (liftingLogSize : Nat)
     (randomCoeff : QM31) : Except VError (List SampleBatch) := do
   if sampledPoints.length ≠ columnLogSizes.length ∨
      sampledPoints.length ≠ sampledValues.length then throw .shapeMismatch
-  let step := canonicStep liftingLogSize
-  let mut batches : List SampleBatch := []
-  let mut randomPow := QM31.one
-  let mut flatColumn := 0
-  for (treePoints, treeValues, treeSizes) in
-      sampledPoints.zip (sampledValues.zip columnLogSizes) do
-    if treePoints.length ≠ treeSizes.length ∨ treePoints.length ≠ treeValues.length then
-      throw .shapeMismatch
-    for (colPoints, colValues, logSize) in
-        treePoints.zip (treeValues.zip treeSizes) do
-      if colPoints.length ≠ colValues.length then throw .shapeMismatch
-      if colPoints.length = 2 then
-        -- Periodicity duplicate: second sample's point shifted by the
-        -- period generator `step^(2^logSize)`, second sample's value.
-        let periodic := (colPoints.getD 1 CPoint.zero).add
-          (PointF.intoQ (step.repeatedDouble logSize))
-        batches := pushEntry batches periodic
-          ⟨flatColumn, colValues.getD 1 QM31.zero, randomPow⟩
-        randomPow := randomPow * randomCoeff
-      for (point, value) in colPoints.zip colValues do
-        batches := pushEntry batches point ⟨flatColumn, value, randomPow⟩
-        randomPow := randomPow * randomCoeff
-      flatColumn := flatColumn + 1
-  return batches
+  let st ← pushTrees (canonicStep liftingLogSize) randomCoeff
+    ⟨[], QM31.one, 0⟩ (sampledPoints.zip (sampledValues.zip columnLogSizes))
+  return st.batches
 
 /-- `complexConjugateLineCoeffs`: `(α·a, α·b, α·c)` with
 `a = conj(v) − v`, `c = conj(P).y − P.y`, `b = v·c − a·P.y`.
@@ -138,8 +162,8 @@ def friAnswers (columnLogSizes : List (List Nat))
     (queriedValues : List (List (List F))) (liftingLogSize : Nat) :
     Except VError (List QM31) := do
   let flatCols := queriedValues.flatten
-  for col in flatCols do
-    if col.length ≠ queryPositions.length then throw .shapeMismatch
+  if flatCols.any (fun col => col.length ≠ queryPositions.length) then
+    throw .shapeMismatch
   let batches ← buildSampleBatches sampledPoints sampledValues columnLogSizes
     liftingLogSize randomCoeff
   -- Precompute per-batch line coefficients and their sums.
@@ -149,24 +173,22 @@ def friAnswers (columnLogSizes : List (List Nat))
     let sumA := coeffs.foldl (fun acc (a, _, _) => acc + a) QM31.zero
     let sumB := coeffs.foldl (fun acc (_, b, _) => acc + b) QM31.zero
     pure (batch, coeffs, sumA, sumB)
-  for batch in batches do
-    for e in batch.entries do
-      if e.columnIndex ≥ flatCols.length then throw .columnIndexOutOfBounds
+  if batches.any (fun batch => batch.entries.any
+      (fun e => e.columnIndex ≥ flatCols.length)) then
+    throw .columnIndexOutOfBounds
   let domain := canonicDomain liftingLogSize
   queryPositions.zipIdx.mapM fun (pos, row) => do
     if pos ≥ domain.size then throw .queryPositionOutOfRange
     let p := domain.at' (bitReverseIndex pos liftingLogSize)
-    let mut acc := QM31.zero
-    for (batch, coeffs, sumA, sumB) in withCoeffs do
+    let terms ← withCoeffs.mapM fun (batch, coeffs, sumA, sumB) => do
       let d := denominator batch.point p
       let di ← match d.inv? with
         | some di => pure di | none => throw VError.divisionByZero
-      let mut numerator := QM31.zero
-      for (e, (_, _, c)) in batch.entries.zip coeffs do
-        let v := (flatCols.getD e.columnIndex []).getD row 0
-        numerator := numerator + c.mulM31 v
-      numerator := numerator - (sumA.mulM31 p.y + sumB)
-      acc := acc + numerator.mulCM31 di
-    pure acc
+      let numerator := (batch.entries.zip coeffs).foldl
+        (fun acc (e, (_, _, c)) =>
+          acc + c.mulM31 ((flatCols.getD e.columnIndex []).getD row 0))
+        QM31.zero
+      pure ((numerator - (sumA.mulM31 p.y + sumB)).mulCM31 di)
+    pure (terms.foldl (· + ·) QM31.zero)
 
 end StwoVerifier.Quotients

@@ -50,6 +50,26 @@ structure Committed where
   lastLayerPoly : List QM31
   deriving Repr
 
+/-- The inner-layer commit walk: mix each root, draw its alpha, step the
+degree bound and domain. Returns the layers in order, the final bound and
+domain, and the channel. -/
+def commitInner (m31 : Bool) (config : FriConfig) :
+    List FriLayerProof → Nat → LineDomain → Channel.St →
+    Except VError (List (LineDomain × QM31 × FriLayerProof) × Nat × LineDomain × Channel.St)
+  | [], bound, domain, s => .ok ([], bound, domain, s)
+  | p :: rest, bound, domain, s => do
+    let s' := Channel.mixRoot m31 s p.commitment
+    let (alpha, s'') ← match Channel.drawSecureFelt m31 s' with
+      | some r => pure r | none => throw .drawFuelExhausted
+    -- foldStepAt: min(fold_step, remaining); profile: always 1 until bound.
+    if bound < config.logLastLayerDegreeBound then throw .invalidNumFriLayers
+    let step := min config.foldStep (bound - config.logLastLayerDegreeBound)
+    if step = 0 then throw .invalidNumFriLayers
+    if bound < step then throw .invalidNumFriLayers
+    let (layers, bound', domain', sOut) ← commitInner m31 config rest
+      (bound - step) ((List.range step).foldl (fun d _ => d.double) domain) s''
+    return ((domain, alpha, p) :: layers, bound', domain', sOut)
+
 /-- `FriVerifier.commit`. Returns the committed state and the channel after
 the FRI transcript. `m31` selects the channel variant. -/
 def commit (m31 : Bool) (s : Channel.St) (config : FriConfig) (proof : FriProof)
@@ -61,29 +81,15 @@ def commit (m31 : Bool) (s : Channel.St) (config : FriConfig) (proof : FriProof)
     | some r => pure r | none => throw .drawFuelExhausted
   -- First circle-to-line fold consumes `fold_step` levels.
   if columnLogBound < config.foldStep then throw .invalidNumFriLayers
-  let mut layerBound := columnLogBound - config.foldStep
-  let mut layerDomain : LineDomain := ⟨Coset.halfOdds (layerBound + config.logBlowupFactor)⟩
-  let mut ch := s
-  let mut inner : List (LineDomain × QM31 × FriLayerProof) := []
-  for p in proof.innerLayers do
-    let s' := Channel.mixRoot m31 ch p.commitment
-    let (alpha, s'') ← match Channel.drawSecureFelt m31 s' with
-      | some r => pure r | none => throw .drawFuelExhausted
-    ch := s''
-    -- foldStepAt: min(fold_step, remaining); profile: always 1 until bound.
-    if layerBound < config.logLastLayerDegreeBound then throw .invalidNumFriLayers
-    let step := min config.foldStep (layerBound - config.logLastLayerDegreeBound)
-    if step = 0 then throw .invalidNumFriLayers  -- `LinePolyDegreeBound.fold` of 0 is fine upstream only if bound ≥ 0… a 0-step layer means too many layers
-    inner := (layerDomain, alpha, p) :: inner
-    if layerBound < step then throw .invalidNumFriLayers
-    layerBound := layerBound - step
-    layerDomain := (List.range step).foldl (fun d _ => d.double) layerDomain
+  let (inner, layerBound, layerDomain, ch) ← commitInner m31 config
+    proof.innerLayers (columnLogBound - config.foldStep)
+    ⟨Coset.halfOdds (columnLogBound - config.foldStep + config.logBlowupFactor)⟩ s
   if layerBound ≠ config.logLastLayerDegreeBound then throw .invalidNumFriLayers
   if proof.lastLayerPoly.length > 2^config.logLastLayerDegreeBound then
     throw .lastLayerDegreeInvalid
   let chOut := Channel.mixFelts m31 ch proof.lastLayerPoly
   return (⟨config, columnCommitmentDomain, firstAlpha, proof.firstLayer,
-    inner.reverse, layerDomain, proof.lastLayerPoly⟩, chOut)
+    inner, layerDomain, proof.lastLayerPoly⟩, chOut)
 
 /-- Fold sorted unique query positions one level (`Queries.fold`, step 1). -/
 def foldPositions (ps : List Nat) : List Nat :=
@@ -176,15 +182,30 @@ def foldLineSubset (domain : LineDomain) (alpha : QM31) (sub : Subset) :
   | [f0, f1] => foldLinePair f0 f1 alpha x
   | _ => throw .shapeMismatch
 
+/-- The inner-layer decommit walk: rebuild, Merkle-verify, line-fold. -/
+def decommitInner :
+    List (LineDomain × QM31 × FriLayerProof) → List Nat → List QM31 →
+    Except VError (List Nat × List QM31)
+  | [], positions, evals => .ok (positions, evals)
+  | (domain, alpha, proof) :: rest, positions, evals => do
+    let subs ← (rebuildSubsets positions evals proof.friWitness).mapError
+      fun e => match e with
+        | .insufficientWitness | .shapeMismatch => .innerLayerEvaluationsInvalid
+        | e => e
+    (verifyLayerMerkle subs domain.logSize proof.commitment proof.hashWitness).mapError
+      fun _ => VError.innerLayerCommitmentInvalid
+    let evals' ← subs.mapM (foldLineSubset domain alpha)
+    decommitInner rest (foldPositions positions) evals'
+
 /-- `decommitLastLayer`: every remaining evaluation equals the last-layer
 polynomial at the bit-reversed domain point. -/
 def lastLayerCheck (c : Committed) (positions : List Nat) (evals : List QM31) :
     Except VError Unit := do
   if positions.length ≠ evals.length then throw .lastLayerEvaluationsInvalid
-  for (q, e) in positions.zip evals do
-    let x := c.lastLayerDomain.at' (bitReverseIndex q c.lastLayerDomain.logSize)
-    if ¬ (e = linePolyEval c.lastLayerPoly (QM31.fromBase x)) then
-      throw .lastLayerEvaluationsInvalid
+  if (positions.zip evals).any (fun (q, e) =>
+      ¬ (e = linePolyEval c.lastLayerPoly (QM31.fromBase
+        (c.lastLayerDomain.at' (bitReverseIndex q c.lastLayerDomain.logSize)))))
+  then throw .lastLayerEvaluationsInvalid
 
 /-- `FriVerifier.decommit`: `queries` are the sorted unique first-layer
 positions and `queryEvals` the DEEP answers at them. -/
@@ -198,18 +219,9 @@ def decommit (c : Committed) (queries : List Nat) (queryEvals : List QM31) :
   (verifyLayerMerkle subsets c.columnCommitmentDomain.logSize
       c.firstProof.commitment c.firstProof.hashWitness).mapError
     fun _ => VError.firstLayerCommitmentInvalid
-  let mut evals ← subsets.mapM (foldCircleSubset c.columnCommitmentDomain c.firstAlpha)
-  let mut positions := foldPositions queries
-  -- Inner layers: rebuild, Merkle-verify, line-fold.
-  for (domain, alpha, proof) in c.innerLayers do
-    let subs ← (rebuildSubsets positions evals proof.friWitness).mapError
-      fun e => match e with
-        | .insufficientWitness | .shapeMismatch => .innerLayerEvaluationsInvalid
-        | e => e
-    (verifyLayerMerkle subs domain.logSize proof.commitment proof.hashWitness).mapError
-      fun _ => VError.innerLayerCommitmentInvalid
-    evals ← subs.mapM (foldLineSubset domain alpha)
-    positions := foldPositions positions
+  let evals ← subsets.mapM (foldCircleSubset c.columnCommitmentDomain c.firstAlpha)
+  let positions := foldPositions queries
+  let (positions, evals) ← decommitInner c.innerLayers positions evals
   lastLayerCheck c positions evals
 
 end StwoVerifier.Fri

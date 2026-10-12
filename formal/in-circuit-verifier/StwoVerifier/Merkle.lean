@@ -131,8 +131,8 @@ def verify (root : Bytes) (columnLogSizes : List Nat) (height : Nat)
     (witness : List Bytes) : Except VError Unit := do
   if queriedValues.length ≠ columnLogSizes.length then throw .invalidQueryShape
   if columnLogSizes.isEmpty then return ()
-  for col in queriedValues do
-    if col.length ≠ queryPositions.length then throw .invalidQueryShape
+  if queriedValues.any (fun col => col.length ≠ queryPositions.length) then
+    throw .invalidQueryShape
   let order := queryOrder queryPositions
   let uniq := sortedUnique queryPositions
   -- Columns sorted by log size, then deduplicated along the query order.
