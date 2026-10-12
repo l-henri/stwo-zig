@@ -28,3 +28,4 @@ import StwoVerifier.DenNonzero
 import StwoVerifier.DeepRow
 import StwoVerifier.SpecRow
 import StwoVerifier.DeepRowSpec
+import StwoVerifier.FriWalk

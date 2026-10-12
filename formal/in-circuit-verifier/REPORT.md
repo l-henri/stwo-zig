@@ -158,9 +158,26 @@ outstanding mechanical work, not new mathematics.
   `buildSampleBatches`-to-response-array ordering bridge
   (`flattenBatches_pushEntry` is the mechanism).
 
-**Remaining**: the `Bound` provenance plumbing above, and the
-`fri_decommit` layer-loop assembly (loops + Merkle plumbing — the
-mathematics above is what they reduce to). The spec's imperative loops have been refactored into pure
+- **The `fri_decommit` layer walk is assembled** (`FriWalk.lean`), at
+  the pinned fold step 1: `layerQuery1` (the coset select check + one
+  `ibutterfly` fold per query), `layerFold1` (one layer's query loop),
+  and `friLayers1` (the multi-layer walk threading the value
+  registers). **`friLayers1_sound`** derives `Chain1` — the value-flow
+  relation: each layer's incoming values are bit-selected from the
+  witness cosets, which fold at the gate-inverted twiddle points into
+  the next layer's values — and **`friDecommit1_sound`** appends the
+  closing `eq` battery, yielding the spec's `lastLayerCheck` on the
+  final values. `bound_of_groupSetup` likewise discharges the DEEP
+  side's `Bound` bundle from `groupSetup`'s gates. What remains on the
+  decommit side: the in-circuit Blake2s Merkle path gadget (ties the
+  witness cosets to the layer roots; the per-query/no-dedup vs the
+  spec's dedup'd-subset structure is Merkle-binding — scope-C
+  territory), and the twiddle-provenance chain
+  (`translate_to_base_point` → `simd.inv`, each proven, their
+  assembly).
+
+**Remaining**: `Bound`/twiddle provenance plumbing above, the circuit
+Blake2s Merkle gadget, and the channel-draw port. The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially, including `Fri.commitInner`), so
 the assemblies can be proven against them directly; `SpecLemmas.lean`
 starts that layer: at last-layer degree bound 0 the spec's final check is
