@@ -32,6 +32,8 @@ namespace CM31
 @[simp] theorem zero_b : (0 : CM31).b = 0 := rfl
 @[simp] theorem one_a : (1 : CM31).a = 1 := rfl
 @[simp] theorem one_b : (1 : CM31).b = 0 := rfl
+@[simp] theorem zero_def : CM31.zero = (0 : CM31) := rfl
+@[simp] theorem one_def : CM31.one = (1 : CM31) := rfl
 
 instance : CommRing CM31 where
   add := (· + ·)

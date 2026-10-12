@@ -73,14 +73,25 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
   composition-tree commit, OODS draw, chunk reconstruction, and the OODS
   equality check. The AIR itself stays an abstract `Air` record; scope B
   instantiates it with the circuit AIR.
-- **Scope A started** (`Gates.lean`, `Algebra.lean`, `CircleGadgets.lean`):
-  the gate model (`Circuit::check` semantics), `CommRing` instances for the
-  concrete CM31/QM31, and proven soundness for the scalar circle gadgets —
-  `double_x`, `add_points`, `double_point` (with the explicit on-circle
-  hypothesis), `coset_vanishing_poly`, `denom_inverse` (standard axioms
-  only; `#print axioms` = propext, Classical.choice, Quot.sound).
-- **Not yet started**: the SIMD gadget layer (`extract_bits`, `select`,
-  packed lanes) needed for `select_queries`, FRI/DEEP gadgets, scope B/C.
+- **Scope A under way** (`Gates.lean`, `Algebra.lean`, `CircleGadgets.lean`,
+  `SimdGadgets.lean`, `BitDecomp.lean`), all standard axioms only
+  (`#print axioms` = propext, Classical.choice, Quot.sound):
+  - the gate model (`Circuit::check` semantics plus finalization
+    constraints) and `CommRing` instances for the concrete CM31/QM31;
+  - scalar circle gadgets proven sound: `double_x`, `add_points`,
+    `double_point` (with the explicit on-circle hypothesis its `2x² − 1`
+    doubling needs), `coset_vanishing_poly`, `denom_inverse`;
+  - the SIMD lane layer: lane-wise `sub`/`mul`/`scalar_mul`, `Simd::eq`
+    with the partial-wire mask, `assert_bits`, `guess_lsb`;
+  - **`extract_bits(·, 31)` + `validate_extract_bits` proven sound**
+    (`extractBits31_sound`): if the emitted gates hold, each lane's 31
+    output bits are *the* binary digits of the lane's canonical M31 value.
+    The canonicity hinges on the `(input·aux − 1)·bits₀ = 0` constraint
+    rejecting the all-ones encoding of 0 — the circuit does carry the
+    constraint its prover-supplied hints need (open question 1, answered
+    for this gadget).
+- **Not yet started**: `select_queries`' point-building half (`select`,
+  `pow2`, generator tables) atop these, FRI/DEEP gadget proofs, scope B/C.
 
 ## Deviations from Zig noted while specifying
 
