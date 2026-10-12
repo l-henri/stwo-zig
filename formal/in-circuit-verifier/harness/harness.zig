@@ -284,6 +284,9 @@ pub fn main() !void {
         .{ .label = "pow_nonce_flip", .kind = .pow },
         .{ .label = "merkle_witness_truncate", .kind = .witness_truncate },
         .{ .label = "merkle_witness_flip", .kind = .merkle_witness },
+        .{ .label = "drop_inner_layer", .kind = .drop_inner_layer },
+        .{ .label = "duplicate_inner_layer", .kind = .duplicate_inner_layer },
+        .{ .label = "extend_last_layer", .kind = .extend_last_layer },
     };
     for (mutations) |mutation| {
         try runCase(arena, &cases, config, proof, mutation.label, mutation);
@@ -375,6 +378,9 @@ const Mutation = struct {
         pow,
         witness_truncate,
         merkle_witness,
+        drop_inner_layer,
+        duplicate_inner_layer,
+        extend_last_layer,
     };
 };
 
@@ -418,6 +424,26 @@ fn applyMutation(proof: *Proof, mutation: Mutation) void {
         .merkle_witness => {
             if (proof.decommitments.items[1].hash_witness.len > 0)
                 proof.decommitments.items[1].hash_witness[0][0] ^= 1;
+        },
+        .drop_inner_layer => {
+            if (proof.fri_proof.inner_layers.len > 0)
+                proof.fri_proof.inner_layers = proof.fri_proof.inner_layers[0 .. proof.fri_proof.inner_layers.len - 1];
+        },
+        .duplicate_inner_layer => {
+            if (proof.fri_proof.inner_layers.len > 0) {
+                const layers = proof.fri_proof.inner_layers;
+                const extended = std.heap.page_allocator.alloc(core.fri.FriLayerProof(Hasher), layers.len + 1) catch return;
+                @memcpy(extended[0..layers.len], layers);
+                extended[layers.len] = layers[layers.len - 1];
+                proof.fri_proof.inner_layers = extended;
+            }
+        },
+        .extend_last_layer => {
+            const coefficients = proof.fri_proof.last_layer_poly.coefficients();
+            const extended = std.heap.page_allocator.alloc(QM31, coefficients.len * 2) catch return;
+            @memcpy(extended[0..coefficients.len], coefficients);
+            @memset(extended[coefficients.len..], QM31.zero());
+            proof.fri_proof.last_layer_poly = core.poly.line.LinePoly.initOwned(extended);
         },
     }
 }
@@ -776,6 +802,9 @@ fn statementMain(arena: std.mem.Allocator, args: [][:0]u8) !void {
         .{ .label = "pow_nonce_flip", .kind = .pow },
         .{ .label = "merkle_witness_truncate", .kind = .witness_truncate },
         .{ .label = "merkle_witness_flip", .kind = .merkle_witness },
+        .{ .label = "drop_inner_layer", .kind = .drop_inner_layer },
+        .{ .label = "duplicate_inner_layer", .kind = .duplicate_inner_layer },
+        .{ .label = "extend_last_layer", .kind = .extend_last_layer },
     };
     for (mutations) |mutation| {
         try runStatementCase(arena, &cases, config, &mock, proof, mutation.label, mutation);
