@@ -186,4 +186,28 @@ theorem num_identity_batched (P : PointQ) (Yq : QM31)
     have hhead := num_identity P r.2.1 r.1 r.2.2 Yq
     linear_combination hhead + ih
 
+/-- **The batched DEEP quotient.** The circuit's accumulated per-point
+quotient equals the spec batch's numerator times the inverse CM31
+denominator — `deep_term_eq` at batch scale. -/
+theorem deep_batch_eq (P : PointQ) (Yq : QM31) (xq yq : F)
+    (hYq : Yq = QM31.fromBase yq)
+    (rs : List (QM31 × QM31 × QM31))
+    (hden : Quotients.denominator P ⟨xq, yq⟩ ≠ 0) :
+    ((rs.map fun r => ((-2 : QM31) * uu * r.1) * imQ r.2.1).sum * Yq
+      + (imQ P.y * (rs.map fun r => ((-2 : QM31) * uu * r.1) * r.2.1).sum
+        - (rs.map fun r => ((-2 : QM31) * uu * r.1) * imQ r.2.1).sum * P.y)
+      - (rs.map fun r => imQ P.y * ((-2 : QM31) * uu * r.1) * r.2.2).sum) /
+      (imQ P.y * QM31.fromBase xq - (imQ P.x * QM31.fromBase yq
+          + (imQ P.y * P.x - imQ P.x * P.y)))
+      = ((rs.map fun r =>
+          r.1 * (P.y.complexConjugate - P.y) * r.2.2
+            - (r.1 * (r.2.1.complexConjugate - r.2.1) * Yq
+              + (r.1 * (r.2.1 * (P.y.complexConjugate - P.y))
+                - r.1 * ((r.2.1.complexConjugate - r.2.1) * P.y)))).sum).mulCM31
+          (Quotients.denominator P ⟨xq, yq⟩)⁻¹ := by
+  rw [num_identity_batched P Yq rs, den_identity P xq yq,
+    mulCM31_eq, embed_inv]
+  have hu : (-uu : QM31) ≠ 0 := neg_ne_zero.mpr uu_ne_zero
+  rw [mul_div_mul_left _ _ hu, div_eq_mul_inv]
+
 end StwoVerifier.Deep
