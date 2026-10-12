@@ -133,6 +133,11 @@ outstanding mechanical work, not new mathematics.
 - `lastLayerEqs_spec` (`FriGadgets.lean`): the decommit's closing `eq`
   battery holding is exactly `Fri.lastLayerCheck` succeeding at the
   pinned last-layer degree bound 0.
+- `unpackIdx_sound` (`FriGadgets.lean`): `simd.unpack`'s lane extraction
+  — the scalar register holds the base-field lift of the wire's lane,
+  which is the link from the SIMD query-point registers
+  (`selectQueries_domainPoint`) to `compute_fri_input`'s scalar
+  `q_x`/`q_y` inputs.
 
 **Remaining**: the `compute_fri_input` outer walk (over groups and
 queries, now a composition of `processGroupQuery_sound` instances) and
