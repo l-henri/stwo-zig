@@ -14,6 +14,7 @@ import StwoVerifier.Gates
 import StwoVerifier.Fri
 import StwoVerifier.FieldTower
 import StwoVerifier.DeepIdentity
+import StwoVerifier.SpecLemmas
 
 namespace StwoVerifier.Gadgets
 
@@ -86,5 +87,34 @@ theorem foldCoset1_sound {ρ : ℕ → QM31} {even odd twiddle alpha n : ℕ} {x
         ext <;> simp [CM31.mul_a, CM31.mul_b]]
   rw [fromBase_inv]
   try ring
+
+/-- The decommit's closing battery: one `eq` gate pinning each query's
+fully folded value to the last-layer constant register. -/
+def lastLayerEqs (coeff : ℕ) (vals : List ℕ) (n : ℕ) : Out Unit :=
+  ⟨vals.map fun v => .eq v coeff, (), n⟩
+
+theorem lastLayerEqs_sound {ρ : ℕ → QM31} {coeff n : ℕ} {vals : List ℕ}
+    (h : AllHold ρ (lastLayerEqs coeff vals n).ops) :
+    ∀ v ∈ vals, ρ v = ρ coeff := by
+  intro v hv
+  have hop : Op.eq v coeff ∈ (lastLayerEqs coeff vals n).ops :=
+    List.mem_map.mpr ⟨v, hv, rfl⟩
+  exact h _ hop
+
+/-- **The battery is the spec's last-layer check.** At the pinned
+last-layer degree bound 0, with the constant register pinned to the
+committed polynomial's single coefficient, the `eq` gates holding is
+exactly `Fri.lastLayerCheck` succeeding on the register values. -/
+theorem lastLayerEqs_spec {ρ : ℕ → QM31} {coeff n : ℕ} {vals : List ℕ}
+    (c : Fri.Committed) (c0 : QM31) (hpoly : c.lastLayerPoly = [c0])
+    (hc : ρ coeff = c0) (positions : List Nat)
+    (hlen : positions.length = vals.length)
+    (h : AllHold ρ (lastLayerEqs coeff vals n).ops) :
+    Fri.lastLayerCheck c positions (vals.map ρ) = .ok () := by
+  rw [SpecLemmas.lastLayerCheck_const c c0 hpoly positions _
+    (by rw [List.length_map, hlen])]
+  intro e he
+  obtain ⟨v, hv, rfl⟩ := List.mem_map.mp he
+  rw [lastLayerEqs_sound h v hv, hc]
 
 end StwoVerifier.Gadgets
