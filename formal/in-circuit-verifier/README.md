@@ -104,9 +104,16 @@ cd formal/in-circuit-verifier && lake exe diffcheck harness/vectors_pow0.json
     `queryIndex_eq_domainPoint` equates the gadget's point with
     `(canonicDomain L).at' (bitReverseIndex pos L)` — the very point the
     differentially-validated `Quotients.friAnswers` evaluates;
-  - **deliverable 3 started** (`OodsGadgets.lean`): `from_partial_evals`
-    and `extract_expected_composition_eval` proven to compute the spec's
-    extension-basis recombination and split-1 chunk reconstruction.
+  - **deliverable 3 started** (`OodsGadgets.lean`, `FieldTower.lean`,
+    `DeepIdentity.lean`): `from_partial_evals` and
+    `extract_expected_composition_eval` proven to compute the spec's
+    extension-basis recombination and split-1 chunk reconstruction;
+    **CM31 and QM31 proven to be fields** (norm arguments, quadratic
+    reciprocity for the non-residue `5`); and the **DEEP term identity**:
+    the circuit's `compute_fri_input` per-response quotient — the
+    `−2u`-scaled `im`-line form — equals the spec's complex-conjugate
+    line-coefficient quotient (`deep_term_eq`: numerator and denominator
+    are each `−u` times the spec's, and the factors cancel).
 - **Remaining**: the channel-draw half of `select_queries`
   (`getQuerySelectionInputFromChannel`; its transcript law is proven in
   starked-bitcoin's `Circuit/Channel.lean` for the same builder), the DEEP

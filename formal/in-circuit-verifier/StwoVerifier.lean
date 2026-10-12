@@ -19,3 +19,4 @@ import StwoVerifier.SelectQueries
 import StwoVerifier.SelectQueriesBridge
 import StwoVerifier.OodsGadgets
 import StwoVerifier.FieldTower
+import StwoVerifier.DeepIdentity
