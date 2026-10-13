@@ -195,7 +195,19 @@ outstanding mechanical work, not new mathematics.
   per-query `unpackIdx` to the scalar registers `friLayers1_sound`
   consumes.
 
-**Remaining**: response-register provenance (the `Bound` data and the
+- **The grouping gap is closed at the value level**: `rowSum_perm`
+  (`SpecRow.lean`) — any two sample groupings with permutation-equal
+  flat views give the same row sum (the circuit groups by point wire
+  id, the spec by point value) — and **`buildSampleBatches_flat`**
+  (`BatchesFlat.lean`): on success, the spec's batches flatten to a
+  permutation of the exact push-order pair list (`treesPairs` — tree
+  by tree, column by column, the periodicity duplicate first, the
+  running power advancing once per entry). Matching `treesPairs`
+  against the emitter's response array is statement-level data
+  (scope B).
+
+**Remaining**: response-register provenance (scope-B statement data:
+`collectOodsResponses` ↔ `treesPairs`, `Bound` data, the
 position/value threading from `deepRows` into `friLayers1`), the
 circuit Blake2s Merkle gadget, and the channel-draw port. The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially, including `Fri.commitInner`), so
