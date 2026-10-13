@@ -458,4 +458,180 @@ theorem drawTwoQm31sG_sound {ρ : ℕ → QM31} {low high n : ℕ}
     (s.digest ++ Channel.u32Le s.nDraws ++ [0])).1,
     (digestFelts_fromM31s (s.digest ++ Channel.u32Le s.nDraws ++ [0])).2]
 
+/-! ### `mix_u32s` / `mix_commitment` -/
+
+theorem leWord_append_left {a b : List UInt8} {k : ℕ}
+    (h : 4 * k + 4 ≤ a.length) :
+    Blake2s.leWord (a ++ b) k = Blake2s.leWord a k := by
+  unfold Blake2s.leWord
+  have hg : ∀ m, m < a.length → (a ++ b).getD m 0 = a.getD m 0 := by
+    intro m hm
+    rw [List.getD_eq_getElem?_getD, List.getElem?_append_left hm,
+      ← List.getD_eq_getElem?_getD]
+  rw [hg _ (by omega), hg _ (by omega), hg _ (by omega), hg _ (by omega)]
+
+theorem leWord_append_right {a b : List UInt8} {k j : ℕ}
+    (h : a.length = 4 * k) :
+    Blake2s.leWord (a ++ b) (k + j) = Blake2s.leWord b j := by
+  unfold Blake2s.leWord
+  have hg : ∀ m, (a ++ b).getD (a.length + m) 0 = b.getD m 0 := by
+    intro m
+    rw [List.getD_eq_getElem?_getD, List.getElem?_append_right (by omega),
+      show a.length + m - a.length = m from by omega,
+      ← List.getD_eq_getElem?_getD]
+  rw [show 4 * (k + j) = a.length + 4 * j from by omega,
+    show a.length + 4 * j + 1 = a.length + (4 * j + 1) from by omega,
+    show a.length + 4 * j + 2 = a.length + (4 * j + 2) from by omega,
+    show a.length + 4 * j + 3 = a.length + (4 * j + 3) from by omega,
+    show a.length + 4 * j = a.length + (4 * j) from rfl,
+    hg, hg, hg, hg]
+
+theorem leWord_flat_u32Le (vals : List ℕ) (pad : List UInt8)
+    (hv : ∀ v ∈ vals, v < 2 ^ 32) {k : ℕ} (hk : k < vals.length) :
+    Blake2s.leWord ((vals.map Channel.u32Le).flatten ++ pad) k
+      = BitVec.ofNat 32 (vals.getD k 0) := by
+  have hflen : ((vals.map Channel.u32Le).flatten).length = 4 * vals.length := by
+    rw [List.length_flatten, List.map_map,
+      show (List.length ∘ Channel.u32Le) = fun _ => 4
+        from funext fun _ => rfl]
+    simp [Nat.mul_comm]
+  rw [leWord_append_left (by omega)]
+  unfold Blake2s.leWord
+  have hb : ∀ c, c < 4 →
+      ((vals.map Channel.u32Le).flatten).getD (4 * k + c) 0
+        = (Channel.u32Le (vals.getD k default)).getD c 0 :=
+    fun c hc => flatten4_getD _ 0 (fun _ => rfl) vals k c hk hc
+  rw [show 4 * k = 4 * k + 0 from by omega, hb 0 (by omega), hb 1 (by omega),
+    hb 2 (by omega), hb 3 (by omega)]
+  have hvk : vals.getD k default < 2 ^ 32 := by
+    refine hv _ ?_
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hk]
+    exact List.getElem_mem hk
+  refine BitVec.eq_of_toNat_eq ?_
+  rw [BitVec.toNat_ofNat]
+  show (vals.getD k default % 256
+    + 2 ^ 8 * (vals.getD k default / 2 ^ 8 % 256)
+    + 2 ^ 16 * (vals.getD k default / 2 ^ 16 % 256)
+    + 2 ^ 24 * (vals.getD k default / 2 ^ 24 % 256)) % 2 ^ 32
+    = vals.getD k default % 2 ^ 32
+  omega
+
+theorem regsWords_append {ρ : ℕ → QM31} {r1 r2 : List ℕ}
+    {w1 w2 : List Blake2s.Word}
+    (h1 : RegsWords ρ r1 w1) (h2 : RegsWords ρ r2 w2) :
+    RegsWords ρ (r1 ++ r2) (w1 ++ w2) := by
+  refine ⟨by rw [List.length_append, List.length_append, h1.len, h2.len],
+    fun j hj => ?_⟩
+  rw [List.length_append] at hj
+  by_cases hjl : j < r1.length
+  · rw [List.getD_eq_getElem?_getD, List.getElem?_append_left hjl,
+      ← List.getD_eq_getElem?_getD,
+      List.getD_eq_getElem?_getD (l := w1 ++ w2),
+      List.getElem?_append_left (by rw [← h1.len]; exact hjl),
+      ← List.getD_eq_getElem?_getD]
+    exact h1.val j hjl
+  · push_neg at hjl
+    rw [List.getD_eq_getElem?_getD, List.getElem?_append_right hjl,
+      ← List.getD_eq_getElem?_getD,
+      List.getD_eq_getElem?_getD (l := w1 ++ w2),
+      List.getElem?_append_right (by rw [← h1.len]; exact hjl),
+      ← List.getD_eq_getElem?_getD, ← h1.len]
+    exact h2.val (j - r1.length) (by omega)
+
+/-- `mix_u32s`: the digest unpacked to words, the values appended, one
+plain-Blake2s compression, the reduced digest. -/
+noncomputable def mixU32sG (low high : ℕ) (values : List ℕ) (n : ℕ) :
+    Out (ℕ × ℕ) :=
+  let dw := unpackFeltsG [low, high] n
+  let hsh := blake2sU32sG (dw.res ++ values) (4 * (8 + values.length)) dw.next
+  let red := reduceHashValueG hsh.res hsh.next
+  ⟨dw.ops ++ hsh.ops ++ red.ops, red.res, red.next⟩
+
+set_option maxHeartbeats 1000000 in
+/-- **`mix_u32s` is the spec's `mixU32s`**: with the value registers
+carrying `u32` words `ws`, the new digest wires serialize to
+`chHash true (digest ‖ LE(ws))` — `mixRoot` is the eight-word case. -/
+theorem mixU32sG_sound {ρ : ℕ → QM31} {low high : ℕ} {values : List ℕ}
+    {ws : List ℕ} {s : Channel.St} {n : ℕ}
+    (hd : ChDigest ρ low high s.digest) (hdlen : s.digest.length = 32)
+    (hws : ∀ w ∈ ws, w < 2 ^ 32)
+    (hvr : RegsWords ρ values (ws.map (BitVec.ofNat 32)))
+    (hwl : ws.length = values.length)
+    (h : AllHold ρ (mixU32sG low high values n).ops) :
+    ChDigest ρ (mixU32sG low high values n).res.1
+      (mixU32sG low high values n).res.2
+      (Channel.mixU32s true s ws).digest := by
+  replace h : AllHold ρ ((unpackFeltsG [low, high] n).ops
+      ++ (blake2sU32sG ((unpackFeltsG [low, high] n).res ++ values)
+          (4 * (8 + values.length)) (unpackFeltsG [low, high] n).next).ops
+      ++ (reduceHashValueG (blake2sU32sG
+          ((unpackFeltsG [low, high] n).res ++ values)
+          (4 * (8 + values.length)) (unpackFeltsG [low, high] n).next).res
+          (blake2sU32sG ((unpackFeltsG [low, high] n).res ++ values)
+            (4 * (8 + values.length))
+            (unpackFeltsG [low, high] n).next).next).ops) := h
+  rw [allHold_append, allHold_append] at h
+  obtain ⟨⟨hdw, hhash⟩, hred⟩ := h
+  have hdwrw := unpackFeltsG_sound [low, high] [ρ low, ρ high] n rfl
+    (fun i hi => by
+      match i, hi with
+      | 0, _ => rfl
+      | 1, _ => rfl) hdw
+  have hmsg := regsWords_append hdwrw hvr
+  set bytes := s.digest ++ (ws.map Channel.u32Le).flatten with hbytes
+  have hblen : bytes.length = 4 * (8 + ws.length) := by
+    rw [hbytes, List.length_append, hdlen, List.length_flatten,
+      List.map_map, show (List.length ∘ Channel.u32Le) = fun _ => 4
+        from funext fun _ => rfl]
+    simp
+    ring
+  have hfwlen : (feltWords [ρ low, ρ high]).length = 8 := by
+    rw [feltWords_length]
+    rfl
+  have hmlen : (feltWords [ρ low, ρ high]
+      ++ ws.map (BitVec.ofNat 32)).length = 8 + ws.length := by
+    rw [List.length_append, hfwlen, List.length_map]
+  have hdbytes : ([ρ low, ρ high].map Channel.qm31Bytes).flatten
+      = s.digest := by
+    rw [show ([ρ low, ρ high].map Channel.qm31Bytes).flatten
+      = Channel.qm31Bytes (ρ low) ++ Channel.qm31Bytes (ρ high) from by
+        simp [List.flatten], hd]
+  have hnb : 4 * (8 + values.length) = bytes.length := by rw [hblen, hwl]
+  have hsound := blake2sU32sG_sound (bytes := bytes) hmsg
+    (by rw [hmlen, hblen])
+    (by rw [hmlen, hblen]; omega)
+    (fun k hk => by
+      rw [hmlen] at hk
+      rw [hbytes, ← hdbytes, List.append_assoc]
+      by_cases hk8 : k < 8
+      · rw [List.getD_eq_getElem?_getD,
+          List.getElem?_append_left (by rw [hfwlen]; omega),
+          ← List.getD_eq_getElem?_getD,
+          leWord_append_left (by rw [hdbytes, hdlen]; omega),
+          leWord_flatten [ρ low, ρ high] k (by simp; omega)]
+      · obtain ⟨j, rfl⟩ : ∃ j, k = 8 + j := ⟨k - 8, by omega⟩
+        rw [List.getD_eq_getElem?_getD,
+          List.getElem?_append_right (by rw [hfwlen]; omega),
+          ← List.getD_eq_getElem?_getD, hfwlen, Nat.add_sub_cancel_left,
+          getD_map' _ (0 : Blake2s.Word) ws j (by omega),
+          leWord_append_right (by rw [hdbytes, hdlen]),
+          leWord_flat_u32Le ws _ hws (by omega)]
+        rfl)
+    (by rw [← hnb]; exact hhash)
+  obtain ⟨h1, h2⟩ := reduceHashValueG_sound hsound
+    (by rw [hsound.len]; simp) (by rw [← hnb]; exact hred)
+  rw [hnb] at h1 h2
+  show Channel.qm31Bytes (ρ (reduceHashValueG (blake2sU32sG
+      ((unpackFeltsG [low, high] n).res ++ values) (4 * (8 + values.length))
+      (unpackFeltsG [low, high] n).next).res (blake2sU32sG
+      ((unpackFeltsG [low, high] n).res ++ values) (4 * (8 + values.length))
+      (unpackFeltsG [low, high] n).next).next).res.1)
+    ++ Channel.qm31Bytes (ρ (reduceHashValueG (blake2sU32sG
+      ((unpackFeltsG [low, high] n).res ++ values) (4 * (8 + values.length))
+      (unpackFeltsG [low, high] n).next).res (blake2sU32sG
+      ((unpackFeltsG [low, high] n).res ++ values) (4 * (8 + values.length))
+      (unpackFeltsG [low, high] n).next).next).res.2)
+    = Channel.chHash true bytes
+  rw [hnb, h1, h2, digestFelts_bytes]
+
 end StwoVerifier.Gadgets
