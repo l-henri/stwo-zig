@@ -576,6 +576,39 @@ theorem prevPointG_sound {ρ : ℕ → QM31} {g : PointF} {oods : PointReg}
   show ((addPoints oods ⟨n, n + 1⟩ (n + 2)).res).val ρ = _
   rw [addPoints_sound ha, hgenval]
 
+/-- With one-hot size bits, each generator point register holds the
+embedded `2^k`-fold trace generator. -/
+theorem periodGeneratorsG_getD_pow {ρ : ℕ → QM31} {one count len : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count)
+    {g : PointF} (hg : OnCircle g) {b0 : SimdReg} {rest : List SimdReg}
+    {n : ℕ} (hb0 : BitShape b0 len count)
+    (hshapes : ∀ b ∈ rest, BitShape b len count)
+    (h : AllHold ρ (periodGeneratorsG one g (b0 :: rest) n).ops)
+    {l k m : ℕ} (hl : l < len)
+    (hbits : (b0 :: rest).map (fun bb => SimdReg.lane ρ bb l)
+      = List.replicate k 0 ++ 1 :: List.replicate m 0) :
+    ((periodGeneratorsG one g (b0 :: rest) n).res.getD l ⟨0, 0⟩).val ρ
+      = PointF.intoQ (g.repeatedDouble k) := by
+  obtain ⟨-, hval⟩ := periodGeneratorsG_sound hone hc hg hb0 hshapes h
+  rw [hval l hl, hbits, bitCombFull_onehot]
+  rfl
+
+/-- **The blowup extension absorbs the lifting offset**: the spec's
+periodicity shift at a committed (blowup-extended) column log,
+`canonicStep(l+1)·2^(k+1)`, is the circuit's `traceGen(l)·2^k`
+(`generatorPoint(log) = subgroupGen(log).toPoint = canonicStep log`). -/
+theorem canonicStep_double_shift {l : ℕ} (hl1 : 1 ≤ l) (hl : l ≤ 30) (k : ℕ) :
+    (canonicStep (l + 1)).repeatedDouble (k + 1)
+      = (canonicStep l).repeatedDouble k := by
+  unfold canonicStep PIdx.toPoint PIdx.reduce subgroupGen M31_CIRCLE_LOG_ORDER
+    circleOrder
+  have h1 : (2 : ℕ) ^ (31 - (l + 1)) % 2 ^ 31 = 2 ^ (31 - (l + 1)) :=
+    Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by norm_num) (by omega))
+  have h2 : (2 : ℕ) ^ (31 - l) % 2 ^ 31 = 2 ^ (31 - l) :=
+    Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by norm_num) (by omega))
+  rw [h1, h2, CPoint.repeatedDouble_eq_smul, CPoint.repeatedDouble_eq_smul,
+    ← pow_add, ← pow_add, show 31 - (l + 1) + (k + 1) = 31 - l + k from by omega]
+
 /- Next (part 3): the response-list assembly — tying the periodicity,
 previous-row and OODS point registers plus the proof's sampled-value
 registers to the spec's `treesPairs` order (`collect_oods_responses`'
