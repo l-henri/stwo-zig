@@ -404,7 +404,27 @@ top (`BlakePack.lean`, `ChannelGadgets.lean`):
   `securePointFromSeed` succeeds, and the registers hold its point.
 
 With these the in-circuit channel is proven method by method against
-the spec `Channel`. Remaining in this port: the Merkle path gadget.
+the spec `Channel`.
+
+### The in-circuit Merkle path (`MerkleGadgets.lean`)
+
+Hashes are eight `u32` limb registers; `wordsBytes` is their byte form.
+`leafG_sound`: `hash_leaf_m31s` is `Merkle.leafHash` of the row its
+value registers carry. `merkleNodeG_sound`: `cond_flip` by the query bit
+then the 64-byte hash is `Merkle.nodeHash` of the ordered children.
+`verifyPathG_sound`: a satisfied `verify_merkle_path` pins the absorbed
+root to `pathRoot` — `nodeHash` folded along the auth path from the
+leaf. The circuit authenticates each query separately, while the spec
+`Merkle.verify` consumes the native batched, deduplicated witness;
+relating the two is exactly the proof-conversion step
+(`verifier_proof.zig`), which stays on the trusted boundary.
+
+**All gadget ports are now done.** What remains for the full scope-B
+proof is composition: the statement-level batch construction (fiber
+entries ↔ `circuitPairs` positions), the per-query-path ↔
+`Merkle.verify` relation (or modeling the proof conversion), and the
+top-level walk of `verify` with `CircuitStatement` that strings the
+proven gadgets together.
 
 ## Open questions (brief §7)
 
