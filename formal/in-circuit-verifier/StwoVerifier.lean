@@ -58,3 +58,4 @@ import StwoVerifier.ColumnOrder
 import StwoVerifier.QuerySorter
 import StwoVerifier.SpecAccept
 import StwoVerifier.DeepComposite
+import StwoVerifier.ResponseLayout
