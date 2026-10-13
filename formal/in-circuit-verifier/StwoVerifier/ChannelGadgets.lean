@@ -248,4 +248,214 @@ theorem mixQm31sG_sound {ρ : ℕ → QM31} {low high : ℕ} {values : List ℕ}
   rw [h1, h2, digestFelts_bytes]
   rfl
 
+/-! ### Drawing -/
+
+/-- The hash word at `j` of the m31 channel hash. -/
+theorem chHash_wordAt (bytes : List UInt8) {j : ℕ} (hj : j < 8) :
+    Channel.wordAt (Channel.chHash true bytes) j
+      = (Blake2s.hashBlocks Blake2s.h0 0 bytes j).toNat % P := by
+  unfold Channel.chHash
+  rw [if_pos rfl, wordAt_reduceDigest _ hj]
+  unfold Blake2s.blake2s
+  rw [wordAt_digest _ hj,
+    reduceWord_mod (Blake2s.hashBlocks Blake2s.h0 0 bytes j).isLt]
+
+/-- In m31 mode the first draw always lands: every reduced word is
+below `2P`. -/
+theorem drawBaseFelts_m31 (fuel : ℕ) (hf : 1 ≤ fuel) (s : Channel.St) :
+    Channel.drawBaseFelts true fuel s
+      = some ([((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 0 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 1 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 2 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 3 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 4 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 5 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 6 : ℕ) : F),
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 7 : ℕ) : F)],
+          ⟨s.digest, s.nDraws + 1⟩) := by
+  cases fuel with
+  | zero => omega
+  | succ fuel =>
+    have hall : (Channel.digestWords (Channel.chHash true
+        (s.digest ++ Channel.u32Le s.nDraws ++ [0]))).all
+        (fun w => decide (w < 2 * P)) = true := by
+      rw [List.all_eq_true]
+      intro w hw
+      obtain ⟨k, hk, rfl⟩ := List.mem_map.mp hw
+      refine decide_eq_true ?_
+      rw [chHash_wordAt _ (by simpa using (List.mem_range.mp hk))]
+      unfold P
+      omega
+    rw [show Channel.drawBaseFelts true (fuel + 1) s
+      = (if ((Channel.digestWords (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0]))).all
+            fun w => decide (w < 2 * P)) = true
+        then some ((Channel.digestWords (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0]))).map
+            (fun w => ((w : ℕ) : F)),
+          (⟨s.digest, s.nDraws + 1⟩ : Channel.St))
+        else Channel.drawBaseFelts true fuel
+          ⟨s.digest, s.nDraws + 1⟩) from rfl, if_pos hall]
+    rfl
+
+set_option maxHeartbeats 4000000 in
+/-- `draw_secure_felts 2` in m31 mode: the eight reduced words of one
+hash, four per felt, counter bumped. -/
+theorem drawSecureFelts_two (s : Channel.St) :
+    Channel.drawSecureFelts true 2 s
+      = some ([QM31.fromM31s
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 0 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 1 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 2 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 3 : ℕ) : F),
+          QM31.fromM31s
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 4 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 5 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 6 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 7 : ℕ) : F)],
+          ⟨s.digest, s.nDraws + 1⟩) := by
+  unfold Channel.drawSecureFelts
+  show Channel.drawSecureFelts.go true 2 s [] = _
+  rw [Channel.drawSecureFelts.go, drawBaseFelts_m31 Channel.drawFuel
+    (by unfold Channel.drawFuel; omega) s]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [if_neg (show ¬((1 : ℕ) = 0) from by omega),
+    show (1 : ℕ) - 1 = 0 from rfl, Channel.drawSecureFelts.go]
+  rfl
+
+set_option maxHeartbeats 1000000 in
+/-- The two-felt digest, word by word. -/
+theorem digestFelts_fromM31s (bytes : List UInt8) :
+    (digestFelts ((List.range 8).map
+        (Blake2s.hashBlocks Blake2s.h0 0 bytes))).1
+      = QM31.fromM31s
+          ((Channel.wordAt (Channel.chHash true bytes) 0 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 1 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 2 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 3 : ℕ) : F) ∧
+    (digestFelts ((List.range 8).map
+        (Blake2s.hashBlocks Blake2s.h0 0 bytes))).2
+      = QM31.fromM31s
+          ((Channel.wordAt (Channel.chHash true bytes) 4 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 5 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 6 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true bytes) 7 : ℕ) : F) := by
+  have hw : ∀ j, j < 8 →
+      ((Channel.wordAt (Channel.chHash true bytes) j : ℕ) : F)
+        = ((((List.range 8).map (Blake2s.hashBlocks Blake2s.h0 0
+            bytes)).getD j 0).toNat : F) := by
+    intro j hj
+    rw [chHash_wordAt _ hj, ZMod.natCast_mod,
+      getD_map' _ (0 : Blake2s.Word) (List.range 8) j (by simpa using hj),
+      show (List.range 8).getD j default = j from by
+        rw [List.getD_eq_getElem?_getD, List.getElem?_range hj]; rfl]
+  constructor
+  · rw [hw 0 (by omega), hw 1 (by omega), hw 2 (by omega), hw 3 (by omega)]
+    unfold digestFelts
+    rw [show (List.range 4).map (fun j => QM31.fromBase
+        (((((List.range 8).map (Blake2s.hashBlocks Blake2s.h0 0
+          bytes)).getD j 0).toNat : ℕ) : F))
+      = [QM31.fromBase _, QM31.fromBase _, QM31.fromBase _, QM31.fromBase _]
+      from rfl, fromPartialEvals_base]
+    rfl
+  · rw [hw 4 (by omega), hw 5 (by omega), hw 6 (by omega), hw 7 (by omega)]
+    unfold digestFelts
+    rw [show (List.range 4).map (fun j => QM31.fromBase
+        (((((List.range 8).map (Blake2s.hashBlocks Blake2s.h0 0
+          bytes)).getD (4 + j) 0).toNat : ℕ) : F))
+      = [QM31.fromBase _, QM31.fromBase _, QM31.fromBase _, QM31.fromBase _]
+      from rfl, fromPartialEvals_base]
+    rfl
+
+/-- `draw_two_qm31s`: the counter constant, then
+`blake2s_m31(digest ‖ n_draws ‖ 0)` over 37 bytes. -/
+noncomputable def drawTwoQm31sG (low high nDraws n : ℕ) : Out (ℕ × ℕ) :=
+  let hsh := blake2sM31G [low, high, n] 37 (n + 1)
+  ⟨.const n (QM31.fromM31s ((nDraws : ℕ) : F) 0 0 0) :: hsh.ops,
+   hsh.res, hsh.next⟩
+
+set_option maxHeartbeats 2000000 in
+/-- **`draw_two_qm31s` draws the spec's two felts**: the result wires
+hold exactly `drawSecureFelts true 2`'s values, and the spec state
+advances to the bumped counter with the digest unchanged. -/
+theorem drawTwoQm31sG_sound {ρ : ℕ → QM31} {low high n : ℕ}
+    {s : Channel.St}
+    (hd : ChDigest ρ low high s.digest) (hdlen : s.digest.length = 32)
+    (hnd : s.nDraws < P)
+    (h : AllHold ρ (drawTwoQm31sG low high s.nDraws n).ops) :
+    Channel.drawSecureFelts true 2 s
+      = some ([ρ (drawTwoQm31sG low high s.nDraws n).res.1,
+               ρ (drawTwoQm31sG low high s.nDraws n).res.2],
+              ⟨s.digest, s.nDraws + 1⟩) := by
+  replace h : AllHold ρ
+      (Op.const n (QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0) ::
+        (blake2sM31G [low, high, n] 37 (n + 1)).ops) := h
+  rw [allHold_cons] at h
+  obtain ⟨hc, hh⟩ := h
+  simp only [Holds] at hc
+  have hblen : (s.digest ++ Channel.u32Le s.nDraws ++ [0]).length = 37 := by
+    rw [List.length_append, List.length_append, hdlen]
+    rfl
+  rw [show (37 : ℕ)
+    = (s.digest ++ Channel.u32Le s.nDraws ++ [0]).length from hblen.symm] at hh
+  have hsound := blake2sM31G_sound
+    (xs := [ρ low, ρ high, QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0])
+    (bytes := s.digest ++ Channel.u32Le s.nDraws ++ [0])
+    (by simp)
+    (fun i hi => by
+      match i, hi with
+      | 0, _ => rfl
+      | 1, _ => rfl
+      | 2, _ => exact hc)
+    (by
+      rw [show ([ρ low, ρ high,
+          QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0].map
+          Channel.qm31Bytes).flatten
+        = Channel.qm31Bytes (ρ low) ++ (Channel.qm31Bytes (ρ high)
+          ++ Channel.qm31Bytes
+            (QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0)) from by
+        simp [List.flatten]]
+      rw [show Channel.qm31Bytes (QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0)
+        = Channel.u32Le s.nDraws ++ List.replicate 12 0 from by
+        rw [show QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0
+          = (⟨⟨((s.nDraws : ℕ) : F), 0⟩, ⟨0, 0⟩⟩ : QM31) from rfl,
+          qm31Bytes_mk, ZMod.val_cast_of_lt hnd]
+        rfl]
+      rw [hblen]
+      rw [show (16 * ([ρ low, ρ high,
+          QM31.fromM31s ((s.nDraws : ℕ) : F) 0 0 0]).length - 37) = 11
+        from rfl]
+      rw [← List.append_assoc, hd]
+      rw [List.append_assoc, List.append_assoc]
+      refine congrArg _ ?_
+      rw [← List.append_assoc]
+      rfl)
+    (by rw [hblen]; rfl)
+    hh
+  obtain ⟨h1, h2⟩ := hsound
+  rw [hblen] at h1 h2
+  rw [drawSecureFelts_two s]
+  show _ = some ([ρ (blake2sM31G [low, high, n] 37 (n + 1)).res.1,
+      ρ (blake2sM31G [low, high, n] 37 (n + 1)).res.2],
+    (⟨s.digest, s.nDraws + 1⟩ : Channel.St))
+  rw [h1, h2, (digestFelts_fromM31s
+    (s.digest ++ Channel.u32Le s.nDraws ++ [0])).1,
+    (digestFelts_fromM31s (s.digest ++ Channel.u32Le s.nDraws ++ [0])).2]
+
 end StwoVerifier.Gadgets
