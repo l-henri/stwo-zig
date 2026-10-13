@@ -306,5 +306,75 @@ theorem friAnswers_ok
     simp only [coeffsOf]
     ring
 
+/-! ### Grouping invariance of the row value
+
+The circuit groups samples by point *wire ids* (first seen), the spec
+by point *values* (`pushEntry`). Any two groupings with
+permutation-equal flat views give the same row sum, because the batch
+term is additive over a batch's entries. -/
+
+theorem mulCM31_add (x y : QM31) (c : CM31) :
+    (x + y).mulCM31 c = x.mulCM31 c + y.mulCM31 c := by
+  unfold QM31.mulCM31
+  refine QM31.ext' ?_ ?_ <;> show _ = _ <;> simp <;> ring
+
+theorem mulCM31_zero (c : CM31) : (0 : QM31).mulCM31 c = 0 := by
+  unfold QM31.mulCM31
+  refine QM31.ext' ?_ ?_ <;> show _ = _ <;> simp
+
+/-- Scaling distributes over a mapped sum. -/
+theorem sum_mulCM31 {α : Type} (l : List α) (f : α → QM31) (c : CM31) :
+    ((l.map f).sum).mulCM31 c = (l.map fun e => (f e).mulCM31 c).sum := by
+  induction l with
+  | nil => simpa using mulCM31_zero c
+  | cons e rest ih =>
+    simp only [List.map_cons, List.sum_cons]
+    rw [mulCM31_add, ih]
+
+/-- The flat per-entry term of a batch row. -/
+noncomputable def flatTerm (flatCols : List (List F)) (row : ℕ) (p : PointF)
+    (pe : PointQ × NumeratorData) : QM31 :=
+  (pe.2.randomCoeff * (pe.1.y.complexConjugate - pe.1.y)
+      * QM31.fromBase ((flatCols.getD pe.2.columnIndex []).getD row 0)
+    - (pe.2.randomCoeff * (pe.2.sampleValue.complexConjugate - pe.2.sampleValue)
+          * QM31.fromBase p.y
+      + (pe.2.randomCoeff * (pe.2.sampleValue * (pe.1.y.complexConjugate - pe.1.y))
+        - pe.2.randomCoeff * ((pe.2.sampleValue.complexConjugate
+            - pe.2.sampleValue) * pe.1.y)))).mulCM31 (denominator pe.1 p)⁻¹
+
+/-- A batch's term is the sum of its flat entries' terms. -/
+theorem batchTerm_eq_flat (b : SampleBatch) (flatCols : List (List F))
+    (row : ℕ) (p : PointF) :
+    batchTerm b flatCols row p
+      = ((b.entries.map fun e => (b.point, e)).map
+          (flatTerm flatCols row p)).sum := by
+  unfold batchTerm
+  rw [sum_mulCM31, List.map_map]
+  refine congrArg List.sum ?_
+  refine List.map_congr_left fun e _ => ?_
+  rfl
+
+/-- The row sum over any grouping is the flat sum. -/
+theorem rowSum_eq_flat (batches : List SampleBatch) (flatCols : List (List F))
+    (row : ℕ) (p : PointF) :
+    (batches.map fun b => batchTerm b flatCols row p).sum
+      = ((flattenBatches batches).map (flatTerm flatCols row p)).sum := by
+  unfold flattenBatches
+  rw [List.map_flatMap, List.flatMap_def, List.sum_flatten, List.map_map]
+  refine congrArg List.sum ?_
+  refine List.map_congr_left fun b _ => ?_
+  exact batchTerm_eq_flat b flatCols row p
+
+/-- **Grouping invariance**: permutation-equal flat views give equal
+row sums — the bridge between the circuit's wire-id groups and the
+spec's value-keyed batches. -/
+theorem rowSum_perm {groups batches : List SampleBatch}
+    (flatCols : List (List F)) (row : ℕ) (p : PointF)
+    (hperm : (flattenBatches groups).Perm (flattenBatches batches)) :
+    (groups.map fun b => batchTerm b flatCols row p).sum
+      = (batches.map fun b => batchTerm b flatCols row p).sum := by
+  rw [rowSum_eq_flat, rowSum_eq_flat]
+  exact List.Perm.sum_eq (hperm.map _)
+
 end Quotients
 end StwoVerifier
