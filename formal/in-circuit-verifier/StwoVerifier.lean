@@ -59,3 +59,4 @@ import StwoVerifier.QuerySorter
 import StwoVerifier.SpecAccept
 import StwoVerifier.DeepComposite
 import StwoVerifier.ResponseLayout
+import StwoVerifier.MerklePathBridge
