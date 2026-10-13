@@ -386,8 +386,25 @@ top (`BlakePack.lean`, `ChannelGadgets.lean`):
   (every reduced word is below `2P`), and the 37-byte draw message's
   zero separator matches the counter felt's packing tail.
 
-Remaining in this port: `mix_commitment`/`mix_u32s`, the proof of
-work, `draw_point`, and the Merkle path gadget.
+- **`mix_u32s` is `mixU32s`** (`mixU32sG_sound`) and **`mix_commitment`
+  is `mixRoot`** (`mixCommitmentG_sound`; a 32-byte root is the LE
+  serialization of its own words, `root_reconstruct`).
+- **The proof of work is sound** (`PowGadget.lean`, `powG_sound`): any
+  assignment satisfying `Channel::pow`'s gates carries a nonce wire whose
+  spec nonce `lo + 2³²·hi` (high coordinates masked to zero) passes
+  `verifyPowNonce`, and the digest update is `mixU64`. The circuit pins
+  the low `n_bits` of the first reduced word via the 31-bit
+  `extract_bits`; `trailingZeroBits_ge` turns that into the spec's
+  trailing-zero count over the first 16 digest bytes (a zero first word
+  already gives 32). One completeness-only restriction is visible here:
+  the wire form needs `lo < P`, so nonces with a low word ≥ P are not
+  representable — never an issue for soundness.
+- **`draw_point` is the OODS-point draw** (`drawPointG_sound`): the seed
+  is `drawSecureFelt`'s, the `inv` gate forces `1 + t² ≠ 0` so
+  `securePointFromSeed` succeeds, and the registers hold its point.
+
+With these the in-circuit channel is proven method by method against
+the spec `Channel`. Remaining in this port: the Merkle path gadget.
 
 ## Open questions (brief §7)
 
