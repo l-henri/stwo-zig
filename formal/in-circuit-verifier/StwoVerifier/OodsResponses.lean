@@ -8,8 +8,8 @@ the bits of the (power-of-two) component size: starting from the trace
 generator, it doubles a scalar point per bit position and accumulates
 `bit · coords` lane-wise, so a one-hot bit pattern selects the
 `2^log`-fold generator. `periodChain_lane` is the general linear form
-(each lane is the bit-weighted coordinate sum); `periodGensG_lane`
-specializes it to one-hot lanes, producing exactly the spec's period
+(each lane is the bit-weighted coordinate sum `bitComb`); the
+`bitCombFull_onehot` specialization produces exactly the spec's period
 shift `canonicStep(lifting).repeatedDouble(log + 1)` (the committed
 column log is blowup-extended, which absorbs the lifting offset:
 `subgroupGen(l+1)·2^(log+1) = subgroupGen(l)·2^log`).
@@ -49,20 +49,33 @@ theorem intoQ_onCircle {p : PointF} (hp : OnCircle p) :
 
 /-! ### The period-generator chain -/
 
+theorem simdScalarMul_data_len (a : SimdReg) (s n : ℕ) :
+    (simdScalarMul a s n).res.data.length = a.data.length := by
+  show (lanewise2 (fun o x y => Op.mul o x y) a.data
+    (a.data.map fun _ => s) n).res.length = a.data.length
+  rw [lanewise2_length, List.length_map, min_self]
+
 /-- One doubling-and-accumulate step per size bit (`period_generators`'
-loop body): `gen ← double gen; acc ← acc + bit ·ₗ gen`. -/
+loop body): `gen ← double gen`, then `acc ← acc + bit ·ₗ gen` on each
+coordinate. -/
+def periodStep (one : ℕ) (b : SimdReg) (gen : PointReg) (ax ay : SimdReg)
+    (n : ℕ) : Out (PointReg × SimdReg × SimdReg) :=
+  let g2 := doublePoint one gen n
+  let sx := simdScalarMul b g2.res.x g2.next
+  let sy := simdScalarMul b g2.res.y sx.next
+  let nx := simdAdd ax sx.res sy.next
+  let ny := simdAdd ay sy.res nx.next
+  ⟨g2.ops ++ sx.ops ++ sy.ops ++ nx.ops ++ ny.ops,
+   (g2.res, nx.res, ny.res), ny.next⟩
+
+/-- The chain over the remaining size bits. -/
 def periodChain (one : ℕ) : List SimdReg → PointReg → SimdReg → SimdReg →
     ℕ → Out (SimdReg × SimdReg)
   | [], _, ax, ay, n => ⟨[], (ax, ay), n⟩
   | b :: rest, gen, ax, ay, n =>
-    let g2 := doublePoint one gen n
-    let sx := simdScalarMul b g2.res.x g2.next
-    let sy := simdScalarMul b g2.res.y sx.next
-    let nx := simdAdd ax sx.res sy.next
-    let ny := simdAdd ay sy.res nx.next
-    let tail := periodChain one rest g2.res nx.res ny.res ny.next
-    ⟨g2.ops ++ sx.ops ++ sy.ops ++ nx.ops ++ ny.ops ++ tail.ops,
-     tail.res, tail.next⟩
+    let st := periodStep one b gen ax ay n
+    let tail := periodChain one rest st.res.1 st.res.2.1 st.res.2.2 st.next
+    ⟨st.ops ++ tail.ops, tail.res, tail.next⟩
 
 /-- `period_generators`: the trace generator as constants, `bit₀ ·ₗ gen`,
 then the chain over the remaining bits. -/
@@ -79,11 +92,309 @@ def periodGensG (one : ℕ) (g : PointF) (bits : List SimdReg) (n : ℕ) :
     ⟨.const cx (QM31.fromBase g.x) :: .const cy (QM31.fromBase g.y) ::
       (sx.ops ++ sy.ops ++ tail.ops), tail.res, tail.next⟩
 
-/- Next (part 2): `periodChain_lane` — each output lane is the
-bit-weighted coordinate sum `Σ_t bit_t(c) · (double^t g)`, hence with
-one-hot lanes the `2^log`-fold generator — then the per-component
-periodicity points (`addPoints` with the unpacked lanes), the
-previous-row point (`addPoints` with the conjugated generator
-constants), and the response-list ↔ `treesPairs` correspondence. -/
+/-! ### The spec: bit-weighted coordinate sums -/
+
+/-- What the chain computes per lane: the bit-weighted sum of the
+doubled generators' coordinates, the generator doubling once per bit
+(`Σ_t b_t · (double^(t+1) P)` coordinate-wise). -/
+def bitComb (P : PointF) : List F → F × F
+  | [] => (0, 0)
+  | b :: rest =>
+    let r := bitComb P.double rest
+    ((P.double).x * b + r.1, (P.double).y * b + r.2)
+
+theorem bitComb_cons (P : PointF) (b : F) (rest : List F) :
+    bitComb P (b :: rest)
+      = ((P.double).x * b + (bitComb P.double rest).1,
+         (P.double).y * b + (bitComb P.double rest).2) := rfl
+
+/-- The whole gadget's per-lane value: bit 0 weighs the generator
+itself, the rest the successive doubles. -/
+def bitCombFull (P : PointF) : List F → F × F
+  | [] => (0, 0)
+  | b :: rest =>
+    let r := bitComb P rest
+    (P.x * b + r.1, P.y * b + r.2)
+
+theorem bitCombFull_cons (P : PointF) (b : F) (rest : List F) :
+    bitCombFull P (b :: rest)
+      = (P.x * b + (bitComb P rest).1, P.y * b + (bitComb P rest).2) := rfl
+
+theorem bitComb_zero : ∀ (m : ℕ) (P : PointF),
+    bitComb P (List.replicate m 0) = (0, 0)
+  | 0, _ => rfl
+  | m + 1, P => by
+    rw [List.replicate_succ, bitComb_cons, bitComb_zero m P.double]
+    simp
+
+/-- A one-hot tail (bit `k` set, counted from the first double) picks
+out the `(k+1)`-fold double. -/
+theorem bitComb_onehot : ∀ (k : ℕ) (P : PointF) (m : ℕ),
+    bitComb P (List.replicate k 0 ++ 1 :: List.replicate m 0)
+      = ((P.repeatedDouble (k + 1)).x, (P.repeatedDouble (k + 1)).y)
+  | 0, P, m => by
+    rw [List.replicate_zero, List.nil_append, bitComb_cons,
+      bitComb_zero m P.double]
+    show ((P.double).x * 1 + 0, (P.double).y * 1 + 0) = _
+    simp [CPoint.repeatedDouble]
+  | k + 1, P, m => by
+    rw [List.replicate_succ, List.cons_append, bitComb_cons,
+      bitComb_onehot k P.double m, repeatedDouble_shift]
+    simp
+
+/-- **One-hot bits select the `2^k`-fold generator**: with the binary
+digits of `2^k` as lanes, the gadget's lane is `component_size ·
+trace_gen` — the spec's periodicity shift. -/
+theorem bitCombFull_onehot : ∀ (k : ℕ) (P : PointF) (m : ℕ),
+    bitCombFull P (List.replicate k 0 ++ 1 :: List.replicate m 0)
+      = ((P.repeatedDouble k).x, (P.repeatedDouble k).y)
+  | 0, P, m => by
+    rw [List.replicate_zero, List.nil_append, bitCombFull_cons,
+      bitComb_zero m P]
+    show (P.x * 1 + 0, P.y * 1 + 0) = _
+    simp [CPoint.repeatedDouble]
+  | k + 1, P, m => by
+    rw [List.replicate_succ, List.cons_append, bitCombFull_cons,
+      bitComb_onehot k P m]
+    simp
+
+/-! ### Soundness of the chain -/
+
+/-- One chain step: the generator register doubles (staying an embedded
+base-field point) and each accumulator lane gains `bit · coordinate`. -/
+theorem periodStep_sound {ρ : ℕ → QM31} {one count len : ℕ} {b : SimdReg}
+    {gen : PointReg} {P : PointF} {ax ay : SimdReg} {n : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count)
+    (hP : OnCircle P) (hgen : gen.val ρ = PointF.intoQ P)
+    (hb : BitShape b len count)
+    (haxc : ax.Covers) (haxl : ax.len = len)
+    (hayc : ay.Covers) (hayl : ay.len = len)
+    (h : AllHold ρ (periodStep one b gen ax ay n).ops) :
+    (periodStep one b gen ax ay n).res.1.val ρ = PointF.intoQ P.double ∧
+    ((periodStep one b gen ax ay n).res.2.1.Covers ∧
+      (periodStep one b gen ax ay n).res.2.1.len = len ∧
+      (periodStep one b gen ax ay n).res.2.2.Covers ∧
+      (periodStep one b gen ax ay n).res.2.2.len = len) ∧
+    ∀ j, j < len →
+      SimdReg.lane ρ (periodStep one b gen ax ay n).res.2.1 j
+        = SimdReg.lane ρ ax j + (P.double).x * SimdReg.lane ρ b j ∧
+      SimdReg.lane ρ (periodStep one b gen ax ay n).res.2.2 j
+        = SimdReg.lane ρ ay j + (P.double).y * SimdReg.lane ρ b j := by
+  set g2 := doublePoint one gen n with hg2def
+  set sx := simdScalarMul b g2.res.x g2.next with hsxdef
+  set sy := simdScalarMul b g2.res.y sx.next with hsydef
+  set nx := simdAdd ax sx.res sy.next with hnxdef
+  set ny := simdAdd ay sy.res nx.next with hnydef
+  replace h : AllHold ρ (g2.ops ++ sx.ops ++ sy.ops ++ nx.ops ++ ny.ops) := h
+  rw [allHold_append, allHold_append, allHold_append, allHold_append] at h
+  obtain ⟨⟨⟨⟨hg2h, hsxh⟩, hsyh⟩, hnxh⟩, hnyh⟩ := h
+  have hcirc : ρ gen.x * ρ gen.x + ρ gen.y * ρ gen.y = 1 := by
+    have hx : ρ gen.x = QM31.fromBase P.x := congrArg CPoint.x hgen
+    have hy : ρ gen.y = QM31.fromBase P.y := congrArg CPoint.y hgen
+    rw [hx, hy]
+    exact intoQ_onCircle hP
+  have hdval : g2.res.val ρ = PointF.intoQ P.double := by
+    show (doublePoint one gen n).res.val ρ = PointF.intoQ P.double
+    rw [doublePoint_sound hone hcirc hg2h, hgen]
+    exact (intoQ_double P).symm
+  have hdx : ρ g2.res.x = QM31.fromBase (P.double).x := congrArg CPoint.x hdval
+  have hdy : ρ g2.res.y = QM31.fromBase (P.double).y := congrArg CPoint.y hdval
+  have hbc : b.Covers := by
+    show b.len ≤ 4 * b.data.length
+    rw [hb.lenEq, hb.dataEq]
+    exact hc
+  have hsxd : sx.res.data.length = count := by
+    rw [hsxdef, simdScalarMul_data_len, hb.dataEq]
+  have hsyd : sy.res.data.length = count := by
+    rw [hsydef, simdScalarMul_data_len, hb.dataEq]
+  refine ⟨hdval, ⟨?_, ?_, ?_, ?_⟩, fun j hj => ⟨?_, ?_⟩⟩
+  · show nx.res.Covers
+    exact simdAdd_covers haxc (by rw [haxl, hsxd]; exact hc)
+  · show nx.res.len = len
+    exact haxl
+  · show ny.res.Covers
+    exact simdAdd_covers hayc (by rw [hayl, hsyd]; exact hc)
+  · show ny.res.len = len
+    exact hayl
+  · have hsxlane : SimdReg.lane ρ sx.res j = (P.double).x * SimdReg.lane ρ b j :=
+      simdScalarMul_lane hbc hdx hsxh j (by rw [hb.lenEq]; exact hj)
+    have hnxlane : SimdReg.lane ρ nx.res j
+        = SimdReg.lane ρ ax j + SimdReg.lane ρ sx.res j :=
+      simdAdd_lane haxc (by rw [haxl, hsxd]; exact hc) hnxh j
+        (by rw [haxl]; exact hj)
+    show SimdReg.lane ρ nx.res j = _
+    rw [hnxlane, hsxlane]
+  · have hsylane : SimdReg.lane ρ sy.res j = (P.double).y * SimdReg.lane ρ b j :=
+      simdScalarMul_lane hbc hdy hsyh j (by rw [hb.lenEq]; exact hj)
+    have hnylane : SimdReg.lane ρ ny.res j
+        = SimdReg.lane ρ ay j + SimdReg.lane ρ sy.res j :=
+      simdAdd_lane hayc (by rw [hayl, hsyd]; exact hc) hnyh j
+        (by rw [hayl]; exact hj)
+    show SimdReg.lane ρ ny.res j = _
+    rw [hnylane, hsylane]
+
+/-- **The chain's lane is the bit-weighted coordinate sum**: starting
+from accumulators `ax, ay` and an embedded on-circle generator `P`,
+each output lane is `acc + Σ_t bit_t · (double^(t+1) P)`
+coordinate-wise. -/
+theorem periodChain_lane {ρ : ℕ → QM31} {one count len : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count) :
+    ∀ (bits : List SimdReg) (gen : PointReg) (P : PointF) (ax ay : SimdReg)
+      (n : ℕ), OnCircle P → gen.val ρ = PointF.intoQ P →
+      (∀ b ∈ bits, BitShape b len count) →
+      ax.Covers → ax.len = len → ay.Covers → ay.len = len →
+      AllHold ρ (periodChain one bits gen ax ay n).ops →
+      ((periodChain one bits gen ax ay n).res.1.Covers ∧
+        (periodChain one bits gen ax ay n).res.1.len = len ∧
+        (periodChain one bits gen ax ay n).res.2.Covers ∧
+        (periodChain one bits gen ax ay n).res.2.len = len) ∧
+      ∀ j, j < len →
+        SimdReg.lane ρ (periodChain one bits gen ax ay n).res.1 j
+          = SimdReg.lane ρ ax j
+            + (bitComb P (bits.map fun bb => SimdReg.lane ρ bb j)).1 ∧
+        SimdReg.lane ρ (periodChain one bits gen ax ay n).res.2 j
+          = SimdReg.lane ρ ay j
+            + (bitComb P (bits.map fun bb => SimdReg.lane ρ bb j)).2 := by
+  intro bits
+  induction bits with
+  | nil =>
+    intro gen P ax ay n _ _ _ haxc haxl hayc hayl _
+    refine ⟨⟨haxc, haxl, hayc, hayl⟩, fun j hj => ⟨?_, ?_⟩⟩
+    · show SimdReg.lane ρ ax j = SimdReg.lane ρ ax j + 0
+      exact (add_zero _).symm
+    · show SimdReg.lane ρ ay j = SimdReg.lane ρ ay j + 0
+      exact (add_zero _).symm
+  | cons b rest ih =>
+    intro gen P ax ay n hP hgen hshapes haxc haxl hayc hayl h
+    rw [show (periodChain one (b :: rest) gen ax ay n).ops =
+      (periodStep one b gen ax ay n).ops ++
+        (periodChain one rest (periodStep one b gen ax ay n).res.1
+          (periodStep one b gen ax ay n).res.2.1
+          (periodStep one b gen ax ay n).res.2.2
+          (periodStep one b gen ax ay n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨hst, htail⟩ := h
+    obtain ⟨hgval, ⟨hnxc, hnxl, hnyc, hnyl⟩, hslane⟩ :=
+      periodStep_sound hone hc hP hgen (hshapes b List.mem_cons_self)
+        haxc haxl hayc hayl hst
+    obtain ⟨ihshape, ihlane⟩ := ih (periodStep one b gen ax ay n).res.1
+      P.double (periodStep one b gen ax ay n).res.2.1
+      (periodStep one b gen ax ay n).res.2.2
+      (periodStep one b gen ax ay n).next (onCircle_double hP) hgval
+      (fun bb hbb => hshapes bb (List.mem_cons_of_mem _ hbb))
+      hnxc hnxl hnyc hnyl htail
+    refine ⟨ihshape, fun j hj => ?_⟩
+    obtain ⟨ih1, ih2⟩ := ihlane j hj
+    obtain ⟨hs1, hs2⟩ := hslane j hj
+    constructor
+    · show SimdReg.lane ρ (periodChain one rest
+        (periodStep one b gen ax ay n).res.1
+        (periodStep one b gen ax ay n).res.2.1
+        (periodStep one b gen ax ay n).res.2.2
+        (periodStep one b gen ax ay n).next).res.1 j = _
+      rw [ih1, hs1, List.map_cons, bitComb_cons]
+      show SimdReg.lane ρ ax j + (P.double).x * SimdReg.lane ρ b j
+          + (bitComb P.double (rest.map fun bb => SimdReg.lane ρ bb j)).1
+        = SimdReg.lane ρ ax j + ((P.double).x * SimdReg.lane ρ b j
+          + (bitComb P.double (rest.map fun bb => SimdReg.lane ρ bb j)).1)
+      ring
+    · show SimdReg.lane ρ (periodChain one rest
+        (periodStep one b gen ax ay n).res.1
+        (periodStep one b gen ax ay n).res.2.1
+        (periodStep one b gen ax ay n).res.2.2
+        (periodStep one b gen ax ay n).next).res.2 j = _
+      rw [ih2, hs2, List.map_cons, bitComb_cons]
+      show SimdReg.lane ρ ay j + (P.double).y * SimdReg.lane ρ b j
+          + (bitComb P.double (rest.map fun bb => SimdReg.lane ρ bb j)).2
+        = SimdReg.lane ρ ay j + ((P.double).y * SimdReg.lane ρ b j
+          + (bitComb P.double (rest.map fun bb => SimdReg.lane ρ bb j)).2)
+      ring
+
+/-- **`period_generators` soundness**: with the trace generator pinned
+as constants, each output lane is the full bit-weighted sum
+`Σ_t bit_t · (double^t gen)` coordinate-wise. -/
+theorem periodGensG_lane {ρ : ℕ → QM31} {one count len : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count)
+    {g : PointF} (hg : OnCircle g) {b0 : SimdReg} {rest : List SimdReg}
+    {n : ℕ} (hb0 : BitShape b0 len count)
+    (hshapes : ∀ b ∈ rest, BitShape b len count)
+    (h : AllHold ρ (periodGensG one g (b0 :: rest) n).ops) :
+    ((periodGensG one g (b0 :: rest) n).res.1.Covers ∧
+      (periodGensG one g (b0 :: rest) n).res.1.len = len ∧
+      (periodGensG one g (b0 :: rest) n).res.2.Covers ∧
+      (periodGensG one g (b0 :: rest) n).res.2.len = len) ∧
+    ∀ j, j < len →
+      SimdReg.lane ρ (periodGensG one g (b0 :: rest) n).res.1 j
+        = (bitCombFull g ((b0 :: rest).map fun bb => SimdReg.lane ρ bb j)).1 ∧
+      SimdReg.lane ρ (periodGensG one g (b0 :: rest) n).res.2 j
+        = (bitCombFull g ((b0 :: rest).map fun bb => SimdReg.lane ρ bb j)).2 := by
+  set sx := simdScalarMul b0 n (n + 2) with hsxdef
+  set sy := simdScalarMul b0 (n + 1) sx.next with hsydef
+  replace h : AllHold ρ (.const n (QM31.fromBase g.x) ::
+      .const (n + 1) (QM31.fromBase g.y) ::
+      (sx.ops ++ sy.ops ++
+        (periodChain one rest ⟨n, n + 1⟩ sx.res sy.res sy.next).ops)) := h
+  rw [allHold_cons, allHold_cons, allHold_append, allHold_append] at h
+  obtain ⟨hcx, hcy, ⟨hsxh, hsyh⟩, htailh⟩ := h
+  simp only [Holds] at hcx hcy
+  have hgenval : (PointReg.mk n (n + 1)).val ρ = PointF.intoQ g :=
+    CPoint.ext' hcx hcy
+  have hb0c : b0.Covers := by
+    show b0.len ≤ 4 * b0.data.length
+    rw [hb0.lenEq, hb0.dataEq]
+    exact hc
+  have hsxc : sx.res.Covers := by
+    rw [hsxdef]
+    exact simdScalarMul_covers hb0c
+  have hsyc : sy.res.Covers := by
+    rw [hsydef]
+    exact simdScalarMul_covers hb0c
+  have hsxl : sx.res.len = len := by
+    show b0.len = len
+    exact hb0.lenEq
+  have hsyl : sy.res.len = len := by
+    show b0.len = len
+    exact hb0.lenEq
+  obtain ⟨chainshape, chainlane⟩ := periodChain_lane hone hc rest ⟨n, n + 1⟩ g
+    sx.res sy.res sy.next hg hgenval hshapes hsxc hsxl hsyc hsyl htailh
+  refine ⟨chainshape, fun j hj => ?_⟩
+  obtain ⟨c1, c2⟩ := chainlane j hj
+  have hsxlane : SimdReg.lane ρ sx.res j = g.x * SimdReg.lane ρ b0 j :=
+    simdScalarMul_lane hb0c hcx hsxh j (by rw [hb0.lenEq]; exact hj)
+  have hsylane : SimdReg.lane ρ sy.res j = g.y * SimdReg.lane ρ b0 j :=
+    simdScalarMul_lane hb0c hcy hsyh j (by rw [hb0.lenEq]; exact hj)
+  constructor
+  · show SimdReg.lane ρ (periodChain one rest ⟨n, n + 1⟩ sx.res sy.res
+      sy.next).res.1 j = _
+    rw [c1, hsxlane, List.map_cons, bitCombFull_cons]
+  · show SimdReg.lane ρ (periodChain one rest ⟨n, n + 1⟩ sx.res sy.res
+      sy.next).res.2 j = _
+    rw [c2, hsylane, List.map_cons, bitCombFull_cons]
+
+/-- One-hot size bits give the `2^k`-fold generator: the period shift
+of a component of log size `k`. -/
+theorem periodGensG_lane_pow {ρ : ℕ → QM31} {one count len : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count)
+    {g : PointF} (hg : OnCircle g) {b0 : SimdReg} {rest : List SimdReg}
+    {n : ℕ} (hb0 : BitShape b0 len count)
+    (hshapes : ∀ b ∈ rest, BitShape b len count)
+    (h : AllHold ρ (periodGensG one g (b0 :: rest) n).ops)
+    {j k m : ℕ} (hj : j < len)
+    (hbits : (b0 :: rest).map (fun bb => SimdReg.lane ρ bb j)
+      = List.replicate k 0 ++ 1 :: List.replicate m 0) :
+    SimdReg.lane ρ (periodGensG one g (b0 :: rest) n).res.1 j
+        = (g.repeatedDouble k).x ∧
+    SimdReg.lane ρ (periodGensG one g (b0 :: rest) n).res.2 j
+        = (g.repeatedDouble k).y := by
+  obtain ⟨-, hlane⟩ := periodGensG_lane hone hc hg hb0 hshapes h
+  obtain ⟨h1, h2⟩ := hlane j hj
+  constructor
+  · rw [h1, hbits, bitCombFull_onehot]
+  · rw [h2, hbits, bitCombFull_onehot]
+
+/- Next (part 2): the per-component periodicity points (`addPoints` of
+the OODS point with the unpacked generator lanes), the previous-row
+point (`addPoints` with the conjugated generator constants), and the
+response-list ↔ `treesPairs` correspondence. -/
 
 end StwoVerifier.Gadgets
