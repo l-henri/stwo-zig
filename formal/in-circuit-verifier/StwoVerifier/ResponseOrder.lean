@@ -198,6 +198,75 @@ theorem treePairs_interTree (step : PointF) (rc : QM31) (pt prevPt : PointQ) :
       treePairs_interTree step rc pt prevPt rest _ _]
     rfl
 
+/-! ### Stable partitions by key
+
+The circuit batches responses by point **wire** id (`computeFriInput`'s
+`AutoArrayHashMap`), the spec by point **value** (`pushEntry`); two
+components of equal log size share a periodicity point value under
+distinct wires, so the groupings genuinely differ. `rowSum_perm` takes
+any grouping whose flat view is a permutation of the spec's, and a
+stable partition by any key is one: each group is the in-order fiber
+of its key. -/
+
+theorem flatMap_congr' {α κ : Type} {l : List κ} {f g : κ → List α}
+    (h : ∀ k ∈ l, f k = g k) : l.flatMap f = l.flatMap g := by
+  induction l with
+  | nil => rfl
+  | cons k rest ih =>
+    rw [List.flatMap_cons, List.flatMap_cons, h k List.mem_cons_self,
+      ih fun k' hk' => h k' (List.mem_cons_of_mem _ hk')]
+
+/-- Partitioning a list into the fibers of a key function (any nodup
+covering key order) permutes it. -/
+theorem partition_flatMap_perm {α κ : Type} [DecidableEq κ] (key : α → κ) :
+    ∀ (keys : List κ) (l : List α), keys.Nodup →
+      (∀ a ∈ l, key a ∈ keys) →
+      (keys.flatMap fun k => l.filter fun a => key a = k).Perm l
+  | [], l, _, hcov => by
+    cases l with
+    | nil => simp
+    | cons a rest => exact absurd (hcov a List.mem_cons_self) (by simp)
+  | k :: ks, l, hnd, hcov => by
+    rw [List.flatMap_cons]
+    have hrest : (ks.flatMap fun k' => l.filter fun a => key a = k')
+        = ks.flatMap fun k' =>
+            (l.filter fun a => ¬(key a = k)).filter fun a => key a = k' := by
+      refine flatMap_congr' fun k' hk' => ?_
+      rw [List.filter_filter]
+      refine (List.filter_congr fun a _ => ?_).symm
+      have hne : k' ≠ k := by
+        rintro rfl
+        exact (List.nodup_cons.mp hnd).1 hk'
+      by_cases he : key a = k'
+      · simp [he, hne]
+      · simp [he]
+    rw [hrest]
+    have hih := partition_flatMap_perm key ks
+      (l.filter fun a => ¬(key a = k)) (List.nodup_cons.mp hnd).2
+      (fun a ha => by
+        have hm := List.mem_filter.mp ha
+        have hk := hcov a hm.1
+        rcases List.mem_cons.mp hk with he | hm2
+        · exact absurd (by simpa using hm.2) (by simp [he])
+        · exact hm2)
+    refine ((hih.append_left (l.filter fun a => key a = k)).trans ?_)
+    simpa using List.filter_append_perm (fun a => key a = k) l
+
+/-- The index-keyed form: responses keyed positionally (the wire ids),
+groups taken at matching positions. -/
+theorem zip_partition_perm {α κ : Type} [DecidableEq κ] [Inhabited α]
+    (ks : List κ) (pairs : List α) (keys : List κ)
+    (hnd : keys.Nodup) (hcov : ∀ k ∈ ks, k ∈ keys)
+    (hlen : ks.length = pairs.length) :
+    (keys.flatMap fun k =>
+        ((ks.zip pairs).filter fun p => p.1 = k).map Prod.snd).Perm pairs := by
+  have hperm := partition_flatMap_perm (Prod.fst : κ × α → κ) keys
+    (ks.zip pairs) hnd (fun p hp => hcov p.1 (List.of_mem_zip hp).1)
+  have hmap := hperm.map (Prod.snd : κ × α → α)
+  rw [List.map_flatMap] at hmap
+  refine hmap.trans ?_
+  rw [List.map_snd_zip (show pairs.length ≤ ks.length by omega)]
+
 /-! ### The circuit statement's four trees -/
 
 theorem treesPairs_cons (step : PointF) (rc : QM31) (pow : QM31) (fc : ℕ)
