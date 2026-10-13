@@ -364,10 +364,30 @@ RFC 7693's G, stated against the spec's `Blake2s.mix`) — and the whole
   `Blake2s.blake2s bytes` (`hashBlocks_congr` discharges that only the
   eight chaining words matter).
 
-Remaining in this port: `unpack_qm31s_to_u32_words` and
-`reduce_hash_value` (felt ↔ word plumbing), the channel methods
-(`mix_commitment`, `mix_qm31s`, the draws, the proof of work) against
-the spec channel, and the Merkle path gadget.
+The felt ↔ word plumbing and the first channel methods are proven on
+top (`BlakePack.lean`, `ChannelGadgets.lean`):
+
+- `unpack_qm31s_to_u32_words` (`unpackFeltsG_sound`): each coordinate
+  lifted and limb-converted; the word list is the felt byte
+  serialization's `leWord`s (4-byte chunk lemma + LE recomposition).
+- `reduce_hash_value` (`reduceHashValueG_sound`): each digest word
+  folded to `low + 2¹⁶·high` — the word mod `P` — four per felt.
+- `blake2sFeltsG_sound` / `blake2sM31G_sound`: end to end, felt
+  registers hash to the spec digest's words and to the channel's
+  two-felt reduced digest.
+- **`ChDigest`**, the channel-state correspondence: the digest wires'
+  byte serialization is the spec digest. `digestFelts_bytes` proves
+  the reduce gadget's felts serialize to `chHash true` exactly (the
+  spec's word-wise reduction *is* `mod P`; `wordAt` inverts both
+  serializations).
+- **`mix_qm31s` is `mixFelts`** (`mixQm31sG_sound`) and
+  **`draw_two_qm31s` is `drawSecureFelts true 2`**
+  (`drawTwoQm31sG_sound`): in m31 mode the first draw always lands
+  (every reduced word is below `2P`), and the 37-byte draw message's
+  zero separator matches the counter felt's packing tail.
+
+Remaining in this port: `mix_commitment`/`mix_u32s`, the proof of
+work, `draw_point`, and the Merkle path gadget.
 
 ## Open questions (brief §7)
 
