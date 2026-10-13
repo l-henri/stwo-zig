@@ -392,9 +392,194 @@ theorem periodGensG_lane_pow {ρ : ℕ → QM31} {one count len : ℕ}
   · rw [h1, hbits, bitCombFull_onehot]
   · rw [h2, hbits, bitCombFull_onehot]
 
-/- Next (part 2): the per-component periodicity points (`addPoints` of
-the OODS point with the unpacked generator lanes), the previous-row
-point (`addPoints` with the conjugated generator constants), and the
-response-list ↔ `treesPairs` correspondence. -/
+/-! ### Unpacking the generator lanes into points -/
+
+/-- `simd.unpack` from lane `i`, `k` lanes: one `unpackIdx` per lane in
+order (`builder/simd.zig` `unpack`). -/
+noncomputable def unpackFrom (s : SimdReg) : ℕ → ℕ → ℕ → Out (List ℕ)
+  | 0, _, n => ⟨[], [], n⟩
+  | k + 1, i, n =>
+    let u := unpackIdx (s.data.getD (i / 4) 0) (i % 4) n
+    let rest := unpackFrom s k (i + 1) u.next
+    ⟨u.ops ++ rest.ops, u.res :: rest.res, rest.next⟩
+
+/-- Each unpacked register holds the base-field lift of its lane. -/
+theorem unpackFrom_sound {ρ : ℕ → QM31} {s : SimdReg} :
+    ∀ (k i n : ℕ), AllHold ρ (unpackFrom s k i n).ops →
+      (unpackFrom s k i n).res.length = k ∧
+      ∀ l, l < k →
+        ρ ((unpackFrom s k i n).res.getD l 0)
+          = QM31.fromBase (SimdReg.lane ρ s (i + l))
+  | 0, _, _ => fun _ => ⟨rfl, fun _ hl => absurd hl (by omega)⟩
+  | k + 1, i, n => by
+    intro h
+    rw [show (unpackFrom s (k + 1) i n).ops =
+      (unpackIdx (s.data.getD (i / 4) 0) (i % 4) n).ops ++
+        (unpackFrom s k (i + 1)
+          (unpackIdx (s.data.getD (i / 4) 0) (i % 4) n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨hu, hrest⟩ := h
+    obtain ⟨ihlen, ihval⟩ := unpackFrom_sound k (i + 1) _ hrest
+    refine ⟨?_, fun l hl => ?_⟩
+    · show (unpackFrom s k (i + 1) _).res.length + 1 = k + 1
+      rw [ihlen]
+    cases l with
+    | zero =>
+      show ρ (unpackIdx (s.data.getD (i / 4) 0) (i % 4) n).res = _
+      rw [unpackIdx_sound (Nat.mod_lt _ (by norm_num)) hu]
+      rfl
+    | succ l =>
+      show ρ ((unpackFrom s k (i + 1) _).res.getD l 0) = _
+      rw [show i + (l + 1) = i + 1 + l from by omega]
+      exact ihval l (by omega)
+
+/-- Pair the unpacked `x` and `y` registers into point registers. -/
+def zipPoints : List ℕ → List ℕ → List PointReg
+  | x :: xs, y :: ys => ⟨x, y⟩ :: zipPoints xs ys
+  | _, _ => []
+
+theorem zipPoints_length : ∀ (xs ys : List ℕ),
+    (zipPoints xs ys).length = min xs.length ys.length
+  | [], _ => by simp [zipPoints]
+  | _ :: _, [] => by simp [zipPoints]
+  | _ :: xs, _ :: ys => by
+    show (zipPoints xs ys).length + 1 = _
+    rw [zipPoints_length xs ys]
+    simp only [List.length_cons]
+    omega
+
+theorem zipPoints_getD : ∀ (xs ys : List ℕ) (l : ℕ), l < xs.length →
+    l < ys.length →
+    (zipPoints xs ys).getD l ⟨0, 0⟩ = ⟨xs.getD l 0, ys.getD l 0⟩
+  | [], _, _, hx, _ => absurd hx (by simp)
+  | _ :: _, [], _, _, hy => absurd hy (by simp)
+  | _ :: _, _ :: _, 0, _, _ => rfl
+  | _ :: xs, _ :: ys, l + 1, hx, hy => by
+    show (zipPoints xs ys).getD l ⟨0, 0⟩ = _
+    exact zipPoints_getD xs ys l (by simpa using hx) (by simpa using hy)
+
+/-- `period_generators`, complete: the chain, then both coordinate
+vectors unpacked lane by lane into per-component point registers. -/
+noncomputable def periodGeneratorsG (one : ℕ) (g : PointF)
+    (bits : List SimdReg) (n : ℕ) : Out (List PointReg) :=
+  let pg := periodGensG one g bits n
+  let xs := unpackFrom pg.res.1 pg.res.1.len 0 pg.next
+  let ys := unpackFrom pg.res.2 pg.res.2.len 0 xs.next
+  ⟨pg.ops ++ xs.ops ++ ys.ops, zipPoints xs.res ys.res, ys.next⟩
+
+/-- Each generator point register holds the embedded bit-weighted
+coordinate sum of its component's size bits. -/
+theorem periodGeneratorsG_sound {ρ : ℕ → QM31} {one count len : ℕ}
+    (hone : ρ one = 1) (hc : len ≤ 4 * count)
+    {g : PointF} (hg : OnCircle g) {b0 : SimdReg} {rest : List SimdReg}
+    {n : ℕ} (hb0 : BitShape b0 len count)
+    (hshapes : ∀ b ∈ rest, BitShape b len count)
+    (h : AllHold ρ (periodGeneratorsG one g (b0 :: rest) n).ops) :
+    (periodGeneratorsG one g (b0 :: rest) n).res.length = len ∧
+    ∀ l, l < len →
+      ((periodGeneratorsG one g (b0 :: rest) n).res.getD l ⟨0, 0⟩).val ρ
+        = ⟨QM31.fromBase
+             (bitCombFull g ((b0 :: rest).map fun bb => SimdReg.lane ρ bb l)).1,
+           QM31.fromBase
+             (bitCombFull g ((b0 :: rest).map fun bb => SimdReg.lane ρ bb l)).2⟩ := by
+  set pg := periodGensG one g (b0 :: rest) n with hpgdef
+  set xs := unpackFrom pg.res.1 pg.res.1.len 0 pg.next with hxsdef
+  set ys := unpackFrom pg.res.2 pg.res.2.len 0 xs.next with hysdef
+  replace h : AllHold ρ (pg.ops ++ xs.ops ++ ys.ops) := h
+  rw [allHold_append, allHold_append] at h
+  obtain ⟨⟨hpg, hxs⟩, hys⟩ := h
+  obtain ⟨⟨-, hxl, -, hyl⟩, hlane⟩ := periodGensG_lane hone hc hg hb0 hshapes hpg
+  obtain ⟨hxslen, hxsval⟩ := unpackFrom_sound pg.res.1.len 0 pg.next hxs
+  obtain ⟨hyslen, hysval⟩ := unpackFrom_sound pg.res.2.len 0 xs.next hys
+  have hxslen' : xs.res.length = len := by rw [hxsdef, hxslen, hxl]
+  have hyslen' : ys.res.length = len := by rw [hysdef, hyslen, hyl]
+  refine ⟨?_, fun l hl => ?_⟩
+  · show (zipPoints xs.res ys.res).length = len
+    rw [zipPoints_length, hxslen', hyslen', min_self]
+  · obtain ⟨g1, g2⟩ := hlane l hl
+    have hgd : (zipPoints xs.res ys.res).getD l ⟨0, 0⟩
+        = ⟨xs.res.getD l 0, ys.res.getD l 0⟩ :=
+      zipPoints_getD xs.res ys.res l (by omega) (by omega)
+    show ((zipPoints xs.res ys.res).getD l ⟨0, 0⟩).val ρ = _
+    rw [hgd]
+    refine CPoint.ext' ?_ ?_
+    · show ρ (xs.res.getD l 0) = _
+      rw [hxsdef]
+      rw [hxsval l (by rw [hxl]; exact hl), Nat.zero_add, g1]
+    · show ρ (ys.res.getD l 0) = _
+      rw [hysdef]
+      rw [hysval l (by rw [hyl]; exact hl), Nat.zero_add, g2]
+
+/-! ### The periodicity points and the previous-row point -/
+
+/-- The `collect_oods_responses` periodicity loop: `addPoints` of the
+OODS point with each component's period generator, in order. -/
+def addPointsList (oods : PointReg) : List PointReg → ℕ → Out (List PointReg)
+  | [], n => ⟨[], [], n⟩
+  | p :: rest, n =>
+    let a := addPoints oods p n
+    let r := addPointsList oods rest a.next
+    ⟨a.ops ++ r.ops, a.res :: r.res, r.next⟩
+
+theorem addPointsList_sound {ρ : ℕ → QM31} {oods : PointReg} :
+    ∀ (gens : List PointReg) (n : ℕ),
+      AllHold ρ (addPointsList oods gens n).ops →
+      (addPointsList oods gens n).res.length = gens.length ∧
+      ∀ l, l < gens.length →
+        ((addPointsList oods gens n).res.getD l ⟨0, 0⟩).val ρ
+          = CPoint.add (oods.val ρ) ((gens.getD l ⟨0, 0⟩).val ρ)
+  | [], _ => fun _ => ⟨rfl, fun _ hl => absurd hl (by simp)⟩
+  | p :: rest, n => by
+    intro h
+    rw [show (addPointsList oods (p :: rest) n).ops =
+      (addPoints oods p n).ops ++
+        (addPointsList oods rest (addPoints oods p n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨ha, hrest⟩ := h
+    obtain ⟨ihlen, ihval⟩ := addPointsList_sound rest _ hrest
+    refine ⟨?_, fun l hl => ?_⟩
+    · show (addPointsList oods rest _).res.length + 1 = rest.length + 1
+      rw [ihlen]
+    cases l with
+    | zero =>
+      show ((addPoints oods p n).res).val ρ = _
+      exact addPoints_sound ha
+    | succ l =>
+      show ((addPointsList oods rest _).res.getD l ⟨0, 0⟩).val ρ = _
+      exact ihval l (by simpa using hl)
+
+/-- The previous-row point: the conjugated trace generator as
+constants, added to the OODS point
+(`oods_point_at_prev_row = add_points(oods, (gen.x, −gen.y))`). -/
+def prevPointG (g : PointF) (oods : PointReg) (n : ℕ) : Out PointReg :=
+  let a := addPoints oods ⟨n, n + 1⟩ (n + 2)
+  ⟨.const n (QM31.fromBase g.x) :: .const (n + 1) (QM31.fromBase (-g.y)) ::
+    a.ops, a.res, a.next⟩
+
+/-- The previous-row register holds `oods + conj(gen)` — on the circle,
+`oods − gen`, the spec's previous-row sample point. -/
+theorem prevPointG_sound {ρ : ℕ → QM31} {g : PointF} {oods : PointReg}
+    {n : ℕ} (h : AllHold ρ (prevPointG g oods n).ops) :
+    ((prevPointG g oods n).res).val ρ
+      = CPoint.add (oods.val ρ) (PointF.intoQ g.conjugate) := by
+  rw [show (prevPointG g oods n).ops =
+    .const n (QM31.fromBase g.x) :: .const (n + 1) (QM31.fromBase (-g.y)) ::
+      (addPoints oods ⟨n, n + 1⟩ (n + 2)).ops from rfl,
+    allHold_cons, allHold_cons] at h
+  obtain ⟨hcx, hcy, ha⟩ := h
+  simp only [Holds] at hcx hcy
+  have hgenval : (PointReg.mk n (n + 1)).val ρ = PointF.intoQ g.conjugate := by
+    refine CPoint.ext' hcx ?_
+    show ρ (n + 1) = QM31.fromBase (CPoint.conjugate g).y
+    rw [hcy]
+    rfl
+  show ((addPoints oods ⟨n, n + 1⟩ (n + 2)).res).val ρ = _
+  rw [addPoints_sound ha, hgenval]
+
+/- Next (part 3): the response-list assembly — tying the periodicity,
+previous-row and OODS point registers plus the proof's sampled-value
+registers to the spec's `treesPairs` order (`collect_oods_responses`'
+response list), and the one-hot discharge of the size-bit hypotheses
+from `extractBits31_sound`. -/
 
 end StwoVerifier.Gadgets
