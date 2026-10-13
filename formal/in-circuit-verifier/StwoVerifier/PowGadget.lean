@@ -13,6 +13,7 @@ passed 32 already. The nonce wire `(lo, hi, 0, 0)` is the spec nonce
 `lo + 2³²·hi` (the high coordinates are masked to zero).
 -/
 import StwoVerifier.ChannelGadgets
+import StwoVerifier.CircleGroup
 
 namespace StwoVerifier.Gadgets
 
@@ -331,5 +332,118 @@ theorem powG_sound {ρ : ℕ → QM31} {zero one low high nonce nBits n : ℕ}
     simp only [List.map_cons, List.map_nil, List.flatten_cons, List.flatten_nil,
       List.append_nil, u32Le_mod32]
     rfl
+
+/-! ### `draw_point` -/
+
+/-- The executable `inv?` succeeds away from zero. -/
+theorem inv?_of_ne {x : QM31} (hx : x ≠ 0) : x.inv? = some x⁻¹ := by
+  cases h : x.inv? with
+  | some y => rw [(QM31.inv?_eq_some h).2]
+  | none =>
+    exfalso
+    apply hx
+    apply QM31.normQ_eq_zero
+    apply CM31.norm2_eq_zero
+    by_contra hn
+    have hs : (x.c0 * x.c0 - QM31.R * (x.c1 * x.c1)).inv?
+        = some ⟨(x.c0 * x.c0 - QM31.R * (x.c1 * x.c1)).a
+            * (CM31.norm (x.c0 * x.c0 - QM31.R * (x.c1 * x.c1)))⁻¹,
+          -(x.c0 * x.c0 - QM31.R * (x.c1 * x.c1)).b
+            * (CM31.norm (x.c0 * x.c0 - QM31.R * (x.c1 * x.c1)))⁻¹⟩ := by
+      unfold CM31.inv?
+      rw [if_neg (by exact hn)]
+    simp [QM31.inv?, hs] at h
+
+/-- `draw_secure_felt` in m31 mode: the first four reduced words. -/
+theorem drawSecureFelt_m31 (s : Channel.St) :
+    Channel.drawSecureFelt true s
+      = some (QM31.fromM31s
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 0 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 1 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 2 : ℕ) : F)
+          ((Channel.wordAt (Channel.chHash true
+            (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 3 : ℕ) : F),
+          ⟨s.digest, s.nDraws + 1⟩) := by
+  unfold Channel.drawSecureFelt
+  rw [drawBaseFelts_m31 Channel.drawFuel (by unfold Channel.drawFuel; omega) s]
+  rfl
+
+/-- `draw_point`: draw `t` (the first of two), then
+`((1 − t²)/(1 + t²), 2t/(1 + t²))`. -/
+noncomputable def drawPointG (low high nDraws n : ℕ) : Out PointReg :=
+  let d := drawTwoQm31sG low high nDraws n
+  let t := d.res.1
+  let m := d.next
+  ⟨d.ops ++
+    [.mul m t t, .const (m + 1) QM31.one, .add (m + 2) m (m + 1),
+     .inv (m + 3) (m + 2), .sub (m + 4) (m + 1) m, .mul (m + 5) (m + 4) (m + 3),
+     .const (m + 6) (QM31.fromM31s 2 0 0 0), .mul (m + 7) (m + 6) t,
+     .mul (m + 8) (m + 7) (m + 3)],
+   ⟨m + 5, m + 8⟩, m + 9⟩
+
+set_option maxHeartbeats 2000000 in
+/-- **`draw_point` is the spec's OODS-point draw**: the drawn seed is
+`drawSecureFelt`'s, the seed-to-point map succeeds (the `inv` gate
+forces `1 + t² ≠ 0`), and the point registers hold its coordinates. -/
+theorem drawPointG_sound {ρ : ℕ → QM31} {low high n : ℕ} {s : Channel.St}
+    (hd : ChDigest ρ low high s.digest) (hdlen : s.digest.length = 32)
+    (hnd : s.nDraws < P)
+    (h : AllHold ρ (drawPointG low high s.nDraws n).ops) :
+    ∃ t, Channel.drawSecureFelt true s = some (t, ⟨s.digest, s.nDraws + 1⟩) ∧
+      securePointFromSeed t = some ((drawPointG low high s.nDraws n).res.val ρ) := by
+  set d := drawTwoQm31sG low high s.nDraws n with hdd
+  set m := d.next with hm
+  replace h : AllHold ρ (d.ops ++
+    [.mul m d.res.1 d.res.1, .const (m + 1) QM31.one, .add (m + 2) m (m + 1),
+     .inv (m + 3) (m + 2), .sub (m + 4) (m + 1) m, .mul (m + 5) (m + 4) (m + 3),
+     .const (m + 6) (QM31.fromM31s 2 0 0 0), .mul (m + 7) (m + 6) d.res.1,
+     .mul (m + 8) (m + 7) (m + 3)]) := h
+  rw [allHold_append] at h
+  obtain ⟨hdh, h⟩ := h
+  simp only [allHold_cons, Holds] at h
+  obtain ⟨hsq, hc1, hden, hinv, hsub, hx, hc2, htt, hy, -⟩ := h
+  have hdraw := drawTwoQm31sG_sound hd hdlen hnd hdh
+  rw [drawSecureFelts_two] at hdraw
+  have ht : ρ d.res.1 = QM31.fromM31s
+      ((Channel.wordAt (Channel.chHash true
+        (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 0 : ℕ) : F)
+      ((Channel.wordAt (Channel.chHash true
+        (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 1 : ℕ) : F)
+      ((Channel.wordAt (Channel.chHash true
+        (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 2 : ℕ) : F)
+      ((Channel.wordAt (Channel.chHash true
+        (s.digest ++ Channel.u32Le s.nDraws ++ [0])) 3 : ℕ) : F) := by
+    have := congrArg (fun o => (o.map fun p => p.1.head?)) hdraw
+    simp at this
+    rw [List.append_assoc]
+    exact this.symm
+  refine ⟨ρ d.res.1, by rw [drawSecureFelt_m31, ht], ?_⟩
+  have hne : ρ (m + 2) ≠ 0 := by
+    intro hz
+    rw [hz, zero_mul] at hinv
+    exact one_ne_zero (show (1 : QM31) = 0 from hinv.symm)
+  have hinv' : ρ (m + 3) = (ρ (m + 2))⁻¹ :=
+    eq_inv_of_mul_eq_one_right (by rw [hinv]; rfl)
+  unfold securePointFromSeed
+  dsimp only
+  have hsqd : (ρ d.res.1).square + QM31.one = ρ (m + 2) := by
+    rw [hden, hsq, hc1]
+    rfl
+  rw [hsqd, inv?_of_ne hne]
+  show some (⟨(QM31.one - (ρ d.res.1).square) * (ρ (m + 2))⁻¹,
+    (ρ d.res.1 + ρ d.res.1) * (ρ (m + 2))⁻¹⟩ : PointQ) = _
+  refine congrArg some (CPoint.ext' ?_ ?_)
+  · show _ = ρ (m + 5)
+    rw [hx, hsub, hinv', hc1, hsq]
+    rfl
+  · show _ = ρ (m + 8)
+    rw [hy, htt, hinv', hc2]
+    have h2 : QM31.fromM31s 2 0 0 0 = 1 + 1 := by
+      refine QM31.ext' ?_ ?_ <;> (ext <;> simp [QM31.fromM31s] <;> norm_num) <;> rfl
+    rw [h2]
+    ring
 
 end StwoVerifier.Gadgets
