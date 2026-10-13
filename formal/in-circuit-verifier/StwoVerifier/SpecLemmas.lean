@@ -98,4 +98,58 @@ theorem commitInner_shape (m31 : Bool) (config : Fri.FriConfig)
               · simp only [List.length_cons]
                 omega
 
+/-- `commitInner` domains: at the pinned fold step 1 and last-layer
+degree bound 0, the stored layer domains are the successive doubles of
+the initial line domain, in order. -/
+theorem commitInner_domains (m31 : Bool) (config : Fri.FriConfig)
+    (hfold : config.foldStep = 1) (hlast : config.logLastLayerDegreeBound = 0) :
+    ∀ (ps : List Fri.FriLayerProof) (bound : Nat) (domain : LineDomain)
+      (s : Channel.St)
+      {layers : List (LineDomain × QM31 × Fri.FriLayerProof)}
+      {bound' : Nat} {domain' : LineDomain} {sOut : Channel.St},
+      Fri.commitInner m31 config ps bound domain s
+        = .ok (layers, bound', domain', sOut) →
+      layers.map Prod.fst
+        = (List.range ps.length).map fun i => LineDomain.double^[i] domain := by
+  intro ps
+  induction ps with
+  | nil =>
+    intro bound domain s layers bound' domain' sOut h
+    rw [Fri.commitInner] at h
+    simp only [Except.ok.injEq, Prod.mk.injEq] at h
+    obtain ⟨hl, -, -, -⟩ := h
+    rw [← hl]
+    rfl
+  | cons p rest ih =>
+    intro bound domain s layers bound' domain' sOut h
+    rw [Fri.commitInner] at h
+    split at h
+    · simp at h
+    · split at h
+      · simp at h
+      · split at h
+        · simp at h
+        · split at h
+          · simp at h
+          · split at h
+            · simp at h
+            · rename_i hrec
+              rw [hfold, hlast] at hrec
+              have hone : min 1 (bound - 0) = 1 := by omega
+              rw [hone] at hrec
+              rw [show ((List.range 1).foldl
+                (fun d _ => LineDomain.double d) domain)
+                = domain.double from rfl] at hrec
+              simp only [Except.ok.injEq, Prod.mk.injEq] at h
+              obtain ⟨hl, -, -, -⟩ := h
+              have hmap := ih _ _ _ hrec
+              rw [← hl]
+              simp only [List.map_cons, List.length_cons,
+                List.range_succ_eq_map, List.map_map]
+              refine congrArg (domain :: ·) ?_
+              rw [hmap]
+              refine List.map_congr_left fun i _ => ?_
+              show LineDomain.double^[i] domain.double = _
+              rw [Function.comp_apply, ← Function.iterate_succ_apply]
+
 end StwoVerifier.SpecLemmas
