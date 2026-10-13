@@ -1,7 +1,7 @@
 /-
 **The proof wires** (`proof.zig` `Proof(Var)`, guessed by the circuit).
 
-`mapG` is the generic list emitter; `PG` is the register record of the
+`mapG` is the generic list emitter; `ProofRegs` is the register record of the
 guessed proof, shaped by the static profile (`nq` queries, evaluation
 domain log `L`); `guessG` allocates it — QM31 values as `.guess`, M31
 eval-domain samples as `.guessM31`, hash words as `guess_u32`
@@ -94,7 +94,7 @@ theorem guessHashG_regs {ρ : ℕ → QM31} {n : ℕ} (h : AllHold ρ (guessHash
 /-! ### The proof record -/
 
 /-- The guessed proof's registers. -/
-structure PG where
+structure ProofRegs where
   salt : ℕ
   traceRoot : List ℕ
   interNonce : ℕ
@@ -128,7 +128,7 @@ noncomputable def guessComp (n : ℕ) (k : ℕ) : Out (List ℕ × List (ℕ × 
     (List.range 4) k).seq fun cum k => ⟨[], (plain, cum), k⟩
 
 /-- **The guess phase**. -/
-noncomputable def guessG (nq L : ℕ) (n : ℕ) : Out PG :=
+noncomputable def guessG (nq L : ℕ) (n : ℕ) : Out ProofRegs :=
   (gQ n).seq fun salt n =>
   (guessHashG n).seq fun traceRoot n =>
   (gQ n).seq fun interNonce n =>
@@ -154,7 +154,7 @@ noncomputable def guessG (nq L : ℕ) (n : ℕ) : Out PG :=
     friRoots, lastCoef, powNonce, cols, authT, friWit, friAuth⟩, n⟩
 
 /-- What the guess gates give. -/
-structure GuessFacts (ρ : ℕ → QM31) (nq L : ℕ) (g : PG) : Prop where
+structure GuessFacts (ρ : ℕ → QM31) (nq L : ℕ) (g : ProofRegs) : Prop where
   traceRoot : HashRegs ρ g.traceRoot
   interRoot : HashRegs ρ g.interRoot
   compRoot : HashRegs ρ g.compRoot

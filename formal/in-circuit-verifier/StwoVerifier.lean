@@ -70,3 +70,7 @@ import StwoVerifier.PhaseFri
 import StwoVerifier.PhaseFriSpec
 import StwoVerifier.SpecGlue
 import StwoVerifier.GuessPhase
+import StwoVerifier.VerifyG
+import StwoVerifier.ReadOff
+import StwoVerifier.SelectShapes
+import StwoVerifier.TreeGlue
