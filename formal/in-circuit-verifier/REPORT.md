@@ -177,14 +177,21 @@ outstanding mechanical work, not new mathematics.
   twiddle register gate-inverts its layer's fold coordinate, the
   conjugate-selected query point's `y` for the circle layer and the
   translated/doubled `baseSeq` points' `x`s for the line layers — the
-  exact `htws` hypotheses of `friLayers1_sound`. What remains there is
-  the index bridge from `baseSeq` to the spec's per-layer
-  `foldLineSubset` fold points (`SelectQueriesBridge`-style index
-  algebra).
+  exact `htws` hypotheses of `friLayers1_sound`. The index bridge is
+  done too (`FoldBridge.lean`): `baseSeq_eq_lineFoldPoints` — entry
+  `ℓ` of the double/translate walk **is** the `ℓ`-times-doubled first
+  inner line coset's point at the bit-reversed folded even position,
+  the exact point `foldLineSubset` divides by (via `foldIdx`, the
+  per-layer fold index, with `queryIndex → foldIdx 1 → foldIdx (ℓ+1)`
+  recurrences on the circuit side and the coset/`bitReverseIndex`
+  computation on the spec side; `commitInner_domains` pins the spec's
+  stored layer domains to the successive doubles). With
+  `base0_eq_evenPoint` for the circle layer, every fold-step-1 twiddle
+  is tied to the exact spec fold coordinate.
 
-**Remaining**: the `baseSeq`-to-spec-domain index bridge and response
-register provenance above, the circuit Blake2s Merkle gadget, and the
-channel-draw port. The spec's imperative loops have been refactored into pure
+**Remaining**: response-register provenance (the `Bound` data and the
+position/value threading from `deepRows` into `friLayers1`), the
+circuit Blake2s Merkle gadget, and the channel-draw port. The spec's imperative loops have been refactored into pure
 recursions (re-validated differentially, including `Fri.commitInner`), so
 the assemblies can be proven against them directly; `SpecLemmas.lean`
 starts that layer: at last-layer degree bound 0 the spec's final check is

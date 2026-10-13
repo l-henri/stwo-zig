@@ -30,3 +30,4 @@ import StwoVerifier.SpecRow
 import StwoVerifier.DeepRowSpec
 import StwoVerifier.FriWalk
 import StwoVerifier.TwiddleChain
+import StwoVerifier.FoldBridge

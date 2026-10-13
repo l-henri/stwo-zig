@@ -11,6 +11,7 @@ twiddle to the exact coordinate `Fri.decommit` folds with.
 -/
 import StwoVerifier.TwiddleChain
 import StwoVerifier.SpecLemmas
+import StwoVerifier.DeepRowSpec
 
 namespace StwoVerifier.Bridge
 
@@ -213,5 +214,238 @@ theorem foldIdx_succ {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L ℓ : ℕ}
   rw [subgroupGen_one_lit] at hdouble ⊢
   rw [h31] at hfl
   exact mod_double_cancel hfl hb1 hdouble
+
+/-- The exponent walk from `foldIdx ℓ` hits every later `foldIdx`. -/
+theorem expSeq_eq_foldIdx {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L : ℕ}
+    (hL30 : L ≤ 30) :
+    ∀ (m ℓ : ℕ), 1 ≤ ℓ → ℓ + m ≤ L - 1 →
+      expSeq (foldIdx b L ℓ) 1 ((List.range m).map fun t => b (t + ℓ + 1))
+        = (List.range m).map fun t => foldIdx b L (ℓ + t + 1) := by
+  intro m
+  induction m with
+  | zero => intro ℓ _ _; rfl
+  | succ m ih =>
+    intro ℓ hℓ1 hℓm
+    rw [List.range_succ_eq_map, List.map_cons, List.map_cons]
+    show PIdx.add' (2 ^ 1 * foldIdx b L ℓ)
+        (PIdx.neg' (b (0 + ℓ + 1) * subgroupGen 1))
+      :: expSeq (PIdx.add' (2 ^ 1 * foldIdx b L ℓ)
+        (PIdx.neg' (b (0 + ℓ + 1) * subgroupGen 1))) 1
+        (((List.range m).map Nat.succ).map fun t => b (t + ℓ + 1)) = _
+    rw [show (0 + ℓ + 1) = ℓ + 1 from by omega,
+      foldIdx_succ hb hL30 hℓ1 (by omega)]
+    rw [List.map_map,
+      show (((fun t => b (t + ℓ + 1)) ∘ Nat.succ))
+        = (fun t => b (t + (ℓ + 1) + 1)) from funext fun t => by
+          show b (t + 1 + ℓ + 1) = b (t + (ℓ + 1) + 1)
+          rw [show t + 1 + ℓ + 1 = t + (ℓ + 1) + 1 from by omega]]
+    rw [ih (ℓ + 1) (by omega) (by omega)]
+    refine congrArg (foldIdx b L (ℓ + 1) :: ·) ?_
+    rw [List.map_map]
+    refine List.map_congr_left fun t _ => ?_
+    show foldIdx b L (ℓ + 1 + t + 1) = foldIdx b L (ℓ + Nat.succ t + 1)
+    rw [show ℓ + 1 + t + 1 = ℓ + Nat.succ t + 1 from by omega]
+
+/-- **The circuit's base-point sequence is the fold-index points**: the
+double/translate walk from the query point visits exactly the
+generator powers of the per-layer fold indices. -/
+theorem baseSeq_eq_foldIdx {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L : ℕ}
+    (hL2 : 2 ≤ L) (hL30 : L ≤ 30) :
+    Gadgets.baseSeq (M31_CIRCLE_GEN.smul (queryIndex b L)) 0
+      ((List.range (L - 1)).map fun t => b (t + 1))
+      = (List.range (L - 1)).map fun t => PIdx.toPoint (foldIdx b L (t + 1)) := by
+  rw [smul_eq_toPoint (queryIndex_lt hb hL2 hL30)]
+  rw [baseSeq_toPoint _ _ _ (by
+    intro v hv
+    obtain ⟨t, -, rfl⟩ := List.mem_map.mp hv
+    exact hb (t + 1))]
+  have hexp : expSeq (queryIndex b L) 0
+      ((List.range (L - 1)).map fun t => b (t + 1))
+      = (List.range (L - 1)).map fun t => foldIdx b L (t + 1) := by
+    rw [show L - 1 = (L - 2) + 1 from by omega, List.range_succ_eq_map,
+      List.map_cons, List.map_cons]
+    show PIdx.add' (2 ^ 0 * queryIndex b L)
+        (PIdx.neg' (b (0 + 1) * subgroupGen 1))
+      :: expSeq (PIdx.add' (2 ^ 0 * queryIndex b L)
+        (PIdx.neg' (b (0 + 1) * subgroupGen 1))) 1
+        (((List.range (L - 2)).map Nat.succ).map fun t => b (t + 1)) = _
+    rw [show (0 + 1 : ℕ) = 1 from by omega, foldIdx_one hb hL2 hL30]
+    rw [List.map_map,
+      show (((fun t => b (t + 1)) ∘ Nat.succ))
+        = (fun t => b (t + 1 + 1)) from funext fun t => by
+          show b (t + 1 + 1) = b (t + 1 + 1)
+          rfl]
+    rw [expSeq_eq_foldIdx hb hL30 (L - 2) 1 (by omega) (by omega)]
+    refine congrArg (foldIdx b L 1 :: ·) ?_
+    rw [List.map_map]
+    refine List.map_congr_left fun t _ => ?_
+    show foldIdx b L (1 + t + 1) = foldIdx b L (Nat.succ t + 1)
+    rw [show 1 + t + 1 = Nat.succ t + 1 from by omega]
+  rw [hexp, List.map_map]
+  rfl
+
+/-- `LineDomain` iterate-double, at the coset. -/
+theorem iterate_double_coset (d : LineDomain) :
+    ∀ m, (LineDomain.double^[m] d).coset = d.coset.repeatedDouble m
+  | 0 => rfl
+  | m + 1 => by
+    rw [Function.iterate_succ_apply']
+    show ((LineDomain.double^[m] d).coset).double
+      = (d.coset.repeatedDouble m).double
+    rw [iterate_double_coset d m]
+
+/-- The repeated double of a reduced coset, in closed form. -/
+theorem repeatedDouble_closed (i0 ls : ℕ) (hi : i0 < circleOrder) :
+    ∀ m, Coset.repeatedDouble ⟨i0, ls⟩ m
+      = ⟨(2 ^ m * i0) % circleOrder, ls - m⟩
+  | 0 => by
+    show (⟨i0, ls⟩ : Coset) = _
+    rw [pow_zero, one_mul, Nat.mod_eq_of_lt hi, Nat.sub_zero]
+  | m + 1 => by
+    show (Coset.repeatedDouble ⟨i0, ls⟩ m).double = _
+    rw [repeatedDouble_closed i0 ls hi m]
+    show (⟨(2 * ((2 ^ m * i0) % circleOrder)) % circleOrder, ls - m - 1⟩ : Coset)
+      = _
+    have hmod : (2 * ((2 ^ m * i0) % circleOrder)) % circleOrder
+        = (2 ^ (m + 1) * i0) % circleOrder := by
+      rw [Nat.mul_mod, Nat.mod_mod_of_dvd _ (dvd_refl circleOrder),
+        ← Nat.mul_mod, show 2 * (2 ^ m * i0) = 2 ^ (m + 1) * i0 from by ring]
+    rw [hmod]
+    rfl
+
+/-- The `foldIdx` tail bound, standalone. -/
+theorem foldIdx_tail_le {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L ℓ : ℕ}
+    (hL30 : L ≤ 30) :
+    (∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2))
+      ≤ 1073741824 := by
+  have h1 : ∀ t ∈ range (L - 1 - ℓ),
+      b (t + ℓ + 1) * subgroupGen (t + 2) = b (t + ℓ + 1) * 2 ^ (29 - t) := by
+    intro t _
+    unfold subgroupGen M31_CIRCLE_LOG_ORDER
+    rw [show (31 : ℕ) - (t + 2) = 29 - t from by omega]
+  rw [Finset.sum_congr rfl h1]
+  calc ∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * 2 ^ (29 - t)
+      ≤ 2 ^ 30 - 2 ^ (30 - (L - 1 - ℓ)) :=
+        sum_pow_le (fun t => b (t + ℓ + 1)) (fun t => hb _) 29 _ (by omega)
+    _ ≤ 2 ^ 30 := Nat.sub_le _ _
+    _ = 1073741824 := by norm_num
+
+set_option maxHeartbeats 800000 in
+/-- **The spec's inner-layer fold index is `foldIdx`**: the `ℓ`-th
+doubled line coset's index at the bit-reversed folded even position. -/
+theorem lineIndexAt_eq_foldIdx {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L ℓ : ℕ}
+    (hL2 : 2 ≤ L) (hL30 : L ≤ 30) (hℓ1 : 1 ≤ ℓ) (hℓ : ℓ ≤ L - 1) :
+    (LineDomain.double^[ℓ - 1] ⟨Coset.halfOdds (L - 1)⟩).coset.indexAt
+      (bitReverseIndex (∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * 2 ^ (t + 1))
+        (L - ℓ))
+      = foldIdx b L ℓ := by
+  have hinit : (Coset.halfOdds (L - 1)).initialIndex = subgroupGen (L + 1) := by
+    show PIdx.reduce (subgroupGen ((L - 1) + 2)) = subgroupGen (L + 1)
+    rw [show (L - 1) + 2 = L + 1 from by omega]
+    unfold PIdx.reduce circleOrder subgroupGen M31_CIRCLE_LOG_ORDER
+    exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by norm_num) (by omega))
+  have hsg : subgroupGen (L + 1) < circleOrder := by
+    unfold subgroupGen M31_CIRCLE_LOG_ORDER circleOrder
+    exact Nat.pow_lt_pow_right (by norm_num) (by omega)
+  have hcoset : (LineDomain.double^[ℓ - 1] ⟨Coset.halfOdds (L - 1)⟩).coset
+      = ⟨subgroupGen (L + 2 - ℓ), L - ℓ⟩ := by
+    rw [iterate_double_coset,
+      show Coset.halfOdds (L - 1) = ⟨subgroupGen (L + 1), L - 1⟩ from by
+        rw [show Coset.halfOdds (L - 1)
+          = ⟨(Coset.halfOdds (L - 1)).initialIndex, L - 1⟩ from rfl, hinit],
+      repeatedDouble_closed _ _ hsg]
+    have hpow : (2 ^ (ℓ - 1) * subgroupGen (L + 1)) % circleOrder
+        = subgroupGen (L + 2 - ℓ) := by
+      unfold subgroupGen M31_CIRCLE_LOG_ORDER circleOrder
+      rw [← pow_add, show ℓ - 1 + (31 - (L + 1)) = 31 - (L + 2 - ℓ) from by
+        omega]
+      exact Nat.mod_eq_of_lt (Nat.pow_lt_pow_right (by norm_num) (by omega))
+    rw [hpow]
+    congr 1
+    omega
+  rw [hcoset]
+  have hb'' : ∀ i, (if i = 0 then 0 else b (i + ℓ)) ≤ 1 := by
+    intro i
+    by_cases h0 : i = 0 <;> simp [h0, hb _]
+  have hstart : (∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * 2 ^ (t + 1))
+      = ∑ i ∈ range (L - ℓ), (if i = 0 then 0 else b (i + ℓ)) * 2 ^ i := by
+    rw [show L - ℓ = (L - 1 - ℓ) + 1 from by omega, Finset.sum_range_succ']
+    simp only [reduceIte, Nat.zero_mul, Nat.add_zero]
+    refine Finset.sum_congr rfl fun t _ => ?_
+    rw [show (if t + 1 = 0 then 0 else b (t + 1 + ℓ)) = b (t + 1 + ℓ) from rfl,
+      show t + 1 + ℓ = t + ℓ + 1 from by omega]
+  have hbitrev : bitReverseIndex
+      (∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * 2 ^ (t + 1)) (L - ℓ)
+      = ∑ k ∈ range (L - ℓ),
+          (if k = 0 then 0 else b (k + ℓ)) * 2 ^ (L - ℓ - 1 - k) := by
+    rw [bitReverseIndex_eq_sum]
+    refine Finset.sum_congr rfl fun k hk => ?_
+    rw [hstart, digit_of_sum hb'' (L - ℓ) k (Finset.mem_range.mp hk)]
+  have hscaled : subgroupGen (L - ℓ) * (∑ k ∈ range (L - ℓ),
+      (if k = 0 then 0 else b (k + ℓ)) * 2 ^ (L - ℓ - 1 - k))
+      = ∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2) := by
+    rw [Finset.mul_sum,
+      show range (L - ℓ) = range ((L - 1 - ℓ) + 1) from by
+        rw [show L - ℓ = (L - 1 - ℓ) + 1 from by omega],
+      Finset.sum_range_succ']
+    simp only [reduceIte, Nat.zero_mul, Nat.mul_zero, Nat.add_zero]
+    refine Finset.sum_congr rfl fun t ht => ?_
+    have ht' := Finset.mem_range.mp ht
+    rw [show (if t + 1 = 0 then 0 else b (t + 1 + ℓ)) = b (t + 1 + ℓ) from rfl]
+    show (2 : ℕ) ^ (31 - (L - ℓ)) * (b (t + 1 + ℓ) * 2 ^ (L - ℓ - 1 - (t + 1)))
+      = b (t + ℓ + 1) * 2 ^ (31 - (t + 2))
+    rw [show t + 1 + ℓ = t + ℓ + 1 from by omega,
+      show (31 : ℕ) - (t + 2) = 31 - (L - ℓ) + (L - ℓ - 1 - (t + 1)) from by
+        omega,
+      pow_add]
+    ring
+  rw [hbitrev]
+  have htail : (∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2))
+      < circleOrder := by
+    have h := foldIdx_tail_le hb (L := L) (ℓ := ℓ) hL30
+    show _ < 2 ^ 31
+    have h31 : (2 : ℕ) ^ 31 = 2147483648 := by norm_num
+    omega
+  have hmul : PIdx.mul' (subgroupGen (L - ℓ)) (∑ k ∈ range (L - ℓ),
+      (if k = 0 then 0 else b (k + ℓ)) * 2 ^ (L - ℓ - 1 - k))
+      = ∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2) := by
+    show (subgroupGen (L - ℓ) * _) % circleOrder = _
+    rw [hscaled]
+    exact Nat.mod_eq_of_lt htail
+  show PIdx.add' (subgroupGen (L + 2 - ℓ)) (PIdx.mul' (subgroupGen (L - ℓ)) _)
+    = foldIdx b L ℓ
+  rw [hmul]
+  show (subgroupGen (L + 2 - ℓ)
+    + ∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2))
+      % circleOrder
+    = subgroupGen (L + 2 - ℓ)
+      + ∑ t ∈ range (L - 1 - ℓ), b (t + ℓ + 1) * subgroupGen (t + 2)
+  exact Nat.mod_eq_of_lt (foldIdx_lt hb hℓ1 hℓ hL30)
+
+/-- **The circuit's base points are the spec's line-layer fold
+points.** Entry `ℓ` of the decommit's double/translate walk (what
+`twiddleChain1_sound` inverts for layer `ℓ + 1`) is the point of the
+`ℓ`-times-doubled first inner line coset at the bit-reversed folded
+even position — the exact point whose `x` the spec's `foldLineSubset`
+divides by at inner layer `ℓ`. -/
+theorem baseSeq_eq_lineFoldPoints {b : ℕ → ℕ} (hb : ∀ i, b i ≤ 1) {L : ℕ}
+    (hL2 : 2 ≤ L) (hL30 : L ≤ 30) :
+    ∀ ℓ, ℓ < L - 1 →
+      (Gadgets.baseSeq (M31_CIRCLE_GEN.smul (queryIndex b L)) 0
+        ((List.range (L - 1)).map fun t => b (t + 1))).getD ℓ CPoint.zero
+      = ((LineDomain.double^[ℓ] ⟨Coset.halfOdds (L - 1)⟩).coset.indexAt
+          (bitReverseIndex
+            (∑ t ∈ range (L - 1 - (ℓ + 1)), b (t + (ℓ + 1) + 1) * 2 ^ (t + 1))
+            (L - (ℓ + 1)))).toPoint := by
+  intro ℓ hℓ
+  rw [baseSeq_eq_foldIdx hb hL2 hL30]
+  rw [Gadgets.getD_map _ CPoint.zero (List.range (L - 1)) ℓ (by simpa using hℓ)]
+  have hri : (List.range (L - 1)).getD ℓ default = ℓ := by
+    rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by simpa using hℓ)]
+    simp
+  rw [hri]
+  exact congrArg PIdx.toPoint
+    (lineIndexAt_eq_foldIdx hb hL2 hL30 (by omega) (by omega)).symm
 
 end StwoVerifier.Bridge
