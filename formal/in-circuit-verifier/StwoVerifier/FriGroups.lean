@@ -153,24 +153,25 @@ def friStep (imMask zero : ℕ) (groups : List ((ℕ × ℕ) × PG)) (r : RespRe
 then step. -/
 def friWalk (imMask zero alpha : ℕ) :
     List RespReg → List ((ℕ × ℕ) × PG) → ℕ → ℕ →
-    Out (List ((ℕ × ℕ) × PG) × ℕ)
-  | [], groups, apReg, n => ⟨[], (groups, apReg), n⟩
+    Out (List ((ℕ × ℕ) × PG) × ℕ × List ℕ)
+  | [], groups, apReg, n => ⟨[], (groups, apReg, []), n⟩
   | r :: rest, groups, apReg, n =>
     let st := friStep imMask zero groups r n (n + 1)
     let tail := friWalk imMask zero alpha rest st.res n st.next
-    ⟨.mul n apReg alpha :: (st.ops ++ tail.ops), tail.res, tail.next⟩
+    ⟨.mul n apReg alpha :: (st.ops ++ tail.ops),
+     (tail.res.1, tail.res.2.1, n :: tail.res.2.2), tail.next⟩
 
 /-- The whole grouping loop: the interned `−2u` start power, the first
 response at `α⁰`, the rest advancing. -/
 noncomputable def friGroups (imMask zero alpha : ℕ) (rs : List RespReg) (n : ℕ) :
-    Out (List ((ℕ × ℕ) × PG) × ℕ) :=
+    Out (List ((ℕ × ℕ) × PG) × ℕ × List ℕ) :=
   match rs with
-  | [] => ⟨[.const n ((-2 : QM31) * Deep.uu)], ([], n), n + 1⟩
+  | [] => ⟨[.const n ((-2 : QM31) * Deep.uu)], ([], n, []), n + 1⟩
   | r :: rest =>
     let st := friStep imMask zero [] r n (n + 1)
     let walk := friWalk imMask zero alpha rest st.res n st.next
     ⟨.const n ((-2 : QM31) * Deep.uu) :: (st.ops ++ walk.ops),
-     walk.res, walk.next⟩
+     (walk.res.1, walk.res.2.1, n :: walk.res.2.2), walk.next⟩
 
 /-! ### The invariant -/
 
@@ -403,14 +404,21 @@ theorem friWalk_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ}
       AllHold ρ (friWalk imMask zero alpha rest groups apReg n).ops →
       GInv ρ α (friWalk imMask zero alpha rest groups apReg n).res.1
         (processed ++ rest.zipIdx (i + 1)) ∧
-      ρ (friWalk imMask zero alpha rest groups apReg n).res.2
-        = (-2 : QM31) * Deep.uu * α ^ (i + rest.length)
+      ρ (friWalk imMask zero alpha rest groups apReg n).res.2.1
+        = (-2 : QM31) * Deep.uu * α ^ (i + rest.length) ∧
+      ((friWalk imMask zero alpha rest groups apReg n).res.2.2.length
+          = rest.length ∧
+        ∀ j, j < rest.length →
+          ρ ((friWalk imMask zero alpha rest groups apReg n).res.2.2.getD j 0)
+            = (-2 : QM31) * Deep.uu * α ^ (i + 1 + j))
   | [], groups, apReg, n, i, processed, hinv, hap, _ => by
-    constructor
+    refine ⟨?_, ?_, rfl, ?_⟩
     · show GInv ρ α groups (processed ++ ([] : List RespReg).zipIdx (i + 1))
       simpa using hinv
     · show ρ apReg = (-2 : QM31) * Deep.uu * α ^ (i + ([] : List RespReg).length)
       simpa using hap
+    · intro j hj
+      exact absurd hj (by simp)
   | r :: rest, groups, apReg, n, i, processed, hinv, hap, h => by
     rw [show (friWalk imMask zero alpha (r :: rest) groups apReg n).ops =
       .mul n apReg alpha ::
@@ -425,11 +433,11 @@ theorem friWalk_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ}
       rw [hmul, hap, halpha, pow_succ]
       ring
     have hstep := friStep_sound hmask hzero hinv hap' hst
-    obtain ⟨hinv', hpow⟩ := friWalk_sound hmask hzero halpha rest
+    obtain ⟨hinv', hpow, hlen, hregs⟩ := friWalk_sound hmask hzero halpha rest
       (friStep imMask zero groups r n (n + 1)).res n
       (friStep imMask zero groups r n (n + 1)).next (i + 1)
       (processed ++ [(r, i + 1)]) hstep hap' htail
-    constructor
+    refine ⟨?_, ?_, ?_, ?_⟩
     · show GInv ρ α (friWalk imMask zero alpha rest
         (friStep imMask zero groups r n (n + 1)).res n
         (friStep imMask zero groups r n (n + 1)).next).res.1 _
@@ -438,9 +446,24 @@ theorem friWalk_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ}
       exact hinv'
     · show ρ (friWalk imMask zero alpha rest
         (friStep imMask zero groups r n (n + 1)).res n
-        (friStep imMask zero groups r n (n + 1)).next).res.2 = _
+        (friStep imMask zero groups r n (n + 1)).next).res.2.1 = _
       rw [hpow, show i + 1 + rest.length = i + (r :: rest).length from by
         rw [List.length_cons]; omega]
+    · show (friWalk imMask zero alpha rest
+        (friStep imMask zero groups r n (n + 1)).res n
+        (friStep imMask zero groups r n (n + 1)).next).res.2.2.length + 1 = _
+      rw [hlen, List.length_cons]
+    · intro j hj
+      cases j with
+      | zero =>
+        show ρ n = _
+        rw [hap']
+      | succ j =>
+        show ρ ((friWalk imMask zero alpha rest
+          (friStep imMask zero groups r n (n + 1)).res n
+          (friStep imMask zero groups r n (n + 1)).next).res.2.2.getD j 0) = _
+        rw [hregs j (by rw [List.length_cons] at hj; omega),
+          show i + 1 + 1 + j = i + 1 + (j + 1) from by omega]
 
 /-- **The grouping loop's invariant at the end**: per wire-keyed group,
 the line coefficients of its point and the `α'`-weighted sums over its
@@ -451,9 +474,14 @@ theorem friGroups_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ
     (hmask : ρ imMask = QM31.fromM31s 0 0 1 1) (hzero : ρ zero = 0)
     (halpha : ρ alpha = α)
     (h : AllHold ρ (friGroups imMask zero alpha rs n).ops) :
-    GInv ρ α (friGroups imMask zero alpha rs n).res.1 rs.zipIdx := by
+    GInv ρ α (friGroups imMask zero alpha rs n).res.1 rs.zipIdx ∧
+    ((friGroups imMask zero alpha rs n).res.2.2.length = rs.length ∧
+      ∀ j, j < rs.length →
+        ρ ((friGroups imMask zero alpha rs n).res.2.2.getD j 0)
+          = (-2 : QM31) * Deep.uu * α ^ j) := by
   match rs with
   | [] =>
+    refine ⟨?_, rfl, fun j hj => absurd hj (by simp)⟩
     show GInv ρ α [] (List.zipIdx [])
     rw [List.zipIdx_nil]
     exact ⟨by simp, by simp, by simp, by simp⟩
@@ -472,14 +500,30 @@ theorem friGroups_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ
     have hempty : GInv ρ α [] [] := ⟨by simp, by simp, by simp, by simp⟩
     have hstep := friStep_sound hmask hzero hempty hap hst
     rw [List.nil_append] at hstep
-    obtain ⟨hinv, -⟩ := friWalk_sound hmask hzero halpha rest
+    obtain ⟨hinv, -, hlen, hregs⟩ := friWalk_sound hmask hzero halpha rest
       (friStep imMask zero [] r n (n + 1)).res n
       (friStep imMask zero [] r n (n + 1)).next 0 [(r, 0)] hstep hap hwalk
-    show GInv ρ α (friWalk imMask zero alpha rest
-      (friStep imMask zero [] r n (n + 1)).res n
-      (friStep imMask zero [] r n (n + 1)).next).res.1 _
-    rw [List.zipIdx_cons]
-    simpa using hinv
+    refine ⟨?_, ?_, ?_⟩
+    · show GInv ρ α (friWalk imMask zero alpha rest
+        (friStep imMask zero [] r n (n + 1)).res n
+        (friStep imMask zero [] r n (n + 1)).next).res.1 _
+      rw [List.zipIdx_cons]
+      simpa using hinv
+    · show (friWalk imMask zero alpha rest
+        (friStep imMask zero [] r n (n + 1)).res n
+        (friStep imMask zero [] r n (n + 1)).next).res.2.2.length + 1 = _
+      rw [hlen, List.length_cons]
+    · intro j hj
+      cases j with
+      | zero =>
+        show ρ n = _
+        rw [hap]
+      | succ j =>
+        show ρ ((friWalk imMask zero alpha rest
+          (friStep imMask zero [] r n (n + 1)).res n
+          (friStep imMask zero [] r n (n + 1)).next).res.2.2.getD j 0) = _
+        rw [hregs j (by rw [List.length_cons] at hj; omega),
+          show 0 + 1 + j = j + 1 from by omega]
 
 /-! ### The finalize loop and the product guard -/
 
