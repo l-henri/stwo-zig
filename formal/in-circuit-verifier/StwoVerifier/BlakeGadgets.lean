@@ -251,7 +251,7 @@ theorem stepsG_sound {ρ : ℕ → QM31} {mRegs : List ℕ}
 
 /-! ### One block's compression -/
 
-private theorem getD_map' {α β : Type} [Inhabited α] (f : α → β) (dflt : β)
+theorem getD_map' {α β : Type} [Inhabited α] (f : α → β) (dflt : β)
     (l : List α) (i : ℕ) (hi : i < l.length) :
     (l.map f).getD i dflt = f (l.getD i default) := by
   rw [List.getD_eq_getElem?_getD, List.getElem?_map,
