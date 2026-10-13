@@ -19,6 +19,7 @@ Soundness theorems quantify over every assignment that satisfies the
 emitted ops.
 -/
 import StwoVerifier.Fields
+import StwoVerifier.Blake2s
 
 namespace StwoVerifier.Gates
 
@@ -34,6 +35,18 @@ def m2uQ (x : QM31) : QM31 :=
 
 /-- A base-field (M31) value: the three non-base coordinates vanish. -/
 def IsBase (x : QM31) : Prop := x.c0.b = 0 ∧ x.c1 = CM31.zero
+
+/-- `is_u32_limbs`: the limb form `(low₁₆, high₁₆, 0, 0)` of a `u32`. -/
+def IsU32 (x : QM31) : Prop :=
+  x.c0.a.val < 65536 ∧ x.c0.b.val < 65536 ∧ x.c1 = CM31.zero
+
+/-- `ivalue.unpack_u32`: the word a limb-form register carries. -/
+def wordOf (x : QM31) : Blake2s.Word :=
+  BitVec.ofNat 32 (x.c0.a.val + 65536 * x.c0.b.val)
+
+/-- `ivalue.pack_u32`: the limb form of a word. -/
+def packW (w : Blake2s.Word) : QM31 :=
+  ⟨⟨((w.toNat % 65536 : ℕ) : F), ((w.toNat / 65536 : ℕ) : F)⟩, ⟨0, 0⟩⟩
 
 /-- One gate / builder event. Registers are naturals, `o` is defined. -/
 inductive Op where
@@ -52,6 +65,11 @@ inductive Op where
   | guessU16 (o : ℕ)
   /-- `Context.inv`: a guess `o` with `x · o = 1`. -/
   | inv (o x : ℕ)
+  /-- A TripleXor gate: `o = a ^^^ b ^^^ c` over `u32` limb wires. -/
+  | tripleXor (o a b c : ℕ)
+  /-- A BlakeGGate: `(o, o+1, o+2, o+3) = G(a, b, c, d, f0, f1)` over
+  `u32` limb wires. -/
+  | blakeG (o a b c d f0 f1 : ℕ)
   deriving Repr
 
 /-- What one gate enforces on an assignment (`Circuit::check` +
@@ -68,6 +86,20 @@ def Holds (ρ : ℕ → QM31) : Op → Prop
   | .guessM31 o => IsBase (ρ o)
   | .guessU16 o => (ρ o).c0.a.val < 65536 ∧ (ρ o).c0.b = 0 ∧ (ρ o).c1 = CM31.zero
   | .inv o x => ρ x * ρ o = QM31.one
+  | .tripleXor o a b c =>
+    IsU32 (ρ a) ∧ IsU32 (ρ b) ∧ IsU32 (ρ c) ∧
+    ρ o = packW (wordOf (ρ a) ^^^ wordOf (ρ b) ^^^ wordOf (ρ c))
+  | .blakeG o a b c d f0 f1 =>
+    IsU32 (ρ a) ∧ IsU32 (ρ b) ∧ IsU32 (ρ c) ∧ IsU32 (ρ d) ∧
+    IsU32 (ρ f0) ∧ IsU32 (ρ f1) ∧
+    (ρ o = packW (Blake2s.mix (wordOf (ρ a)) (wordOf (ρ b)) (wordOf (ρ c))
+        (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).1 ∧
+      ρ (o + 1) = packW (Blake2s.mix (wordOf (ρ a)) (wordOf (ρ b))
+        (wordOf (ρ c)) (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).2.1 ∧
+      ρ (o + 2) = packW (Blake2s.mix (wordOf (ρ a)) (wordOf (ρ b))
+        (wordOf (ρ c)) (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).2.2.1 ∧
+      ρ (o + 3) = packW (Blake2s.mix (wordOf (ρ a)) (wordOf (ρ b))
+        (wordOf (ρ c)) (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).2.2.2)
 
 /-- All emitted gates hold. -/
 def AllHold (ρ : ℕ → QM31) (ops : List Op) : Prop := ∀ op ∈ ops, Holds ρ op
