@@ -634,4 +634,79 @@ theorem mixU32sG_sound {ρ : ℕ → QM31} {low high : ℕ} {values : List ℕ}
     = Channel.chHash true bytes
   rw [hnb, h1, h2, digestFelts_bytes]
 
+/-- `u32Le` of a `wordAt` gives back the bytes. -/
+theorem u32Le_wordAt (b : Channel.Bytes) (k c : ℕ) (hc : c < 4) :
+    (Channel.u32Le (Channel.wordAt b k)).getD c 0 = b.getD (4 * k + c) 0 := by
+  have h0 := (b.getD (4 * k) 0).toNat_lt
+  have h1 := (b.getD (4 * k + 1) 0).toNat_lt
+  have h2 := (b.getD (4 * k + 2) 0).toNat_lt
+  have h3 := (b.getD (4 * k + 3) 0).toNat_lt
+  apply UInt8.toNat_inj.mp
+  unfold Channel.u32Le Channel.wordAt
+  interval_cases c <;> (try simp only [Nat.add_zero]) <;>
+  generalize (b.getD (4 * k) 0).toNat = a0 at *
+  <;> generalize (b.getD (4 * k + 1) 0).toNat = a1 at *
+  <;> generalize (b.getD (4 * k + 2) 0).toNat = a2 at *
+  <;> generalize (b.getD (4 * k + 3) 0).toNat = a3 at *
+  · show (a0 + 2 ^ 8 * a1 + 2 ^ 16 * a2 + 2 ^ 24 * a3) % 256 = a0
+    omega
+  · show (a0 + 2 ^ 8 * a1 + 2 ^ 16 * a2 + 2 ^ 24 * a3) / 2 ^ 8 % 256 = a1
+    omega
+  · show (a0 + 2 ^ 8 * a1 + 2 ^ 16 * a2 + 2 ^ 24 * a3) / 2 ^ 16 % 256 = a2
+    omega
+  · show (a0 + 2 ^ 8 * a1 + 2 ^ 16 * a2 + 2 ^ 24 * a3) / 2 ^ 24 % 256 = a3
+    omega
+
+/-- A 32-byte root is the serialization of its eight words. -/
+theorem root_reconstruct (root : Channel.Bytes) (h32 : root.length = 32) :
+    ((Channel.digestWords root).map Channel.u32Le).flatten = root := by
+  have hlen : ((Channel.digestWords root).map Channel.u32Le).flatten.length
+      = 32 := by
+    simp only [Channel.digestWords, List.map_map, List.length_flatten]
+    rfl
+  refine List.ext_getElem (by rw [hlen, h32]) fun m hm1 hm2 => ?_
+  have hm : m < 32 := by omega
+  have key : ((Channel.digestWords root).map Channel.u32Le).flatten.getD m 0
+      = root.getD m 0 := by
+    rw [show m = 4 * (m / 4) + m % 4 from (Nat.div_add_mod' m 4).symm.trans
+      (by ring)]
+    rw [flatten4_getD _ 0 (fun _ => rfl) (Channel.digestWords root) (m / 4)
+      (m % 4) (by simp [Channel.digestWords]; omega) (Nat.mod_lt _ (by omega))]
+    unfold Channel.digestWords
+    rw [getD_map' _ (default : ℕ) (List.range 8) (m / 4) (by simp; omega),
+      show (List.range 8).getD (m / 4) default = m / 4 from by
+        rw [List.getD_eq_getElem?_getD, List.getElem?_range (by omega)]; rfl,
+      u32Le_wordAt _ _ _ (Nat.mod_lt _ (by omega))]
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hm1,
+    List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hm2] at key
+  simpa using key
+
+/-- `mix_commitment`: `mix_u32s` of the root's eight word wires. -/
+noncomputable def mixCommitmentG (low high : ℕ) (rootRegs : List ℕ) (n : ℕ) :
+    Out (ℕ × ℕ) :=
+  mixU32sG low high rootRegs n
+
+/-- **`mix_commitment` is the spec's `mixRoot`**. -/
+theorem mixCommitmentG_sound {ρ : ℕ → QM31} {low high : ℕ}
+    {rootRegs : List ℕ} {root : Channel.Bytes} {s : Channel.St} {n : ℕ}
+    (hd : ChDigest ρ low high s.digest) (hdlen : s.digest.length = 32)
+    (h32 : root.length = 32)
+    (hrr : RegsWords ρ rootRegs
+      ((Channel.digestWords root).map (BitVec.ofNat 32)))
+    (h : AllHold ρ (mixCommitmentG low high rootRegs n).ops) :
+    ChDigest ρ (mixCommitmentG low high rootRegs n).res.1
+      (mixCommitmentG low high rootRegs n).res.2
+      (Channel.mixRoot true s root).digest := by
+  have hm := mixU32sG_sound hd hdlen
+    (fun w hw => by
+      obtain ⟨k, -, rfl⟩ := List.mem_map.mp hw
+      exact wordAt_lt root k)
+    hrr (by rw [hrr.len, List.length_map]) h
+  unfold ChDigest at hm ⊢
+  show Channel.qm31Bytes (ρ (mixU32sG low high rootRegs n).res.1) ++
+    Channel.qm31Bytes (ρ (mixU32sG low high rootRegs n).res.2) = _
+  rw [hm]
+  show Channel.chHash true (s.digest ++ _) = Channel.chHash true (s.digest ++ root)
+  rw [root_reconstruct root h32]
+
 end StwoVerifier.Gadgets
