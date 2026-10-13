@@ -66,3 +66,4 @@ import StwoVerifier.PhaseComposition
 import StwoVerifier.PhasePcs
 import StwoVerifier.PhaseDecommit
 import StwoVerifier.PhaseDeep
+import StwoVerifier.PhaseFri
