@@ -56,3 +56,4 @@ import StwoVerifier.DagGadget
 import StwoVerifier.TranscriptGadgets
 import StwoVerifier.ColumnOrder
 import StwoVerifier.QuerySorter
+import StwoVerifier.SpecAccept
