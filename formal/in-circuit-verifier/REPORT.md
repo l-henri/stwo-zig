@@ -318,10 +318,28 @@ to the final register binding (`OodsResponses.lean`, `ResponseOrder.lean`):
   partition of the response list into key fibers permutes the
   push-order pair list, so the row sums agree regardless of grouping.
 
-Remaining for this arc: the register binding (response value registers
-= `circuitPairs` entries at matching positions, `Bound` discharge per
-wire group via the existing `bound_of_groupSetup`/`chain_alphas`), and
-the `deepRows`→`friLayers1` threading.
+- **The grouping loop, walked** (`FriGroups.lean`): `computeFriInput`'s
+  phase 1 — one global power chain, `OodsPointAuxiliary` groups keyed
+  by wire pair, init on first sight, accumulates interleaved in
+  response order — modeled statefully with the preserved invariant
+  `GInv` (`friGroups_sound`): per group, the line coefficients of its
+  point and the `α'`-weighted coefficient/`a`/`v` sums over its fiber
+  of the indexed response list, plus the exposed power registers
+  (register `j` holds `−2u·αʲ`). The finalize loop
+  (`friFinalize_sound`) carries each group into `GroupRegs` with
+  `b = d·v − a·P.y`, and the closing `inv` gate on the `d`-product
+  forces every `im(P.y)` nonzero. `bound_of_walk` then discharges
+  `Bound` outright, and `friAnswers_eq_rows_grouped`
+  (`GroupedRows.lean`) restates the deliverable-3 capstone for the
+  wire-keyed grouping: any grouping whose flat view permutes the spec
+  batches' gives the same rows (`rowSum_perm` + `mem_flattenBatches`
+  transfer the denominator guards).
+
+Remaining for this arc: the statement-level batch construction (the
+fibers' entries against `circuitPairs` positions — pure data at the
+final binding) and the composed emitter, where the `deepRows` result
+registers are fed to `friDecommit1` as its first-layer values by
+construction.
 
 ## Open questions (brief §7)
 
