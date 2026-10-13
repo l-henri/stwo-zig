@@ -198,4 +198,70 @@ theorem treePairs_interTree (step : PointF) (rc : QM31) (pt prevPt : PointQ) :
       treePairs_interTree step rc pt prevPt rest _ _]
     rfl
 
+/-! ### The circuit statement's four trees -/
+
+theorem treesPairs_cons (step : PointF) (rc : QM31) (pow : QM31) (fc : ℕ)
+    (T : List (List PointQ) × List (List QM31) × List Nat)
+    (rest : List (List (List PointQ) × List (List QM31) × List Nat)) :
+    treesPairs step rc pow fc (T :: rest)
+      = ((treePairs step rc pow fc (T.1.zip (T.2.1.zip T.2.2))).1
+          ++ (treesPairs step rc
+              (treePairs step rc pow fc (T.1.zip (T.2.1.zip T.2.2))).2.1
+              (treePairs step rc pow fc (T.1.zip (T.2.1.zip T.2.2))).2.2
+              rest).1,
+         (treesPairs step rc
+           (treePairs step rc pow fc (T.1.zip (T.2.1.zip T.2.2))).2.1
+           (treePairs step rc pow fc (T.1.zip (T.2.1.zip T.2.2))).2.2
+           rest).2) := rfl
+
+/-- The full circuit-statement pair list: the preprocessed and trace
+trees (single samples at `pt`), the interaction tree, the composition
+tree — one global power chain. -/
+noncomputable def circuitPairs (step : PointF) (rc : QM31) (pt prevPt : PointQ)
+    (ppVals traceVals : List QM31)
+    (comps : List (List QM31 × List (QM31 × QM31) × Nat))
+    (compVals : List QM31) (pow : QM31) (fc : ℕ) :
+    List (PointQ × NumeratorData) × QM31 × ℕ :=
+  let t0 := singlesPairs rc pt ppVals pow fc
+  let t1 := singlesPairs rc pt traceVals t0.2.1 t0.2.2
+  let t2 := interTreePairs step rc pt prevPt comps t1.2.1 t1.2.2
+  let t3 := singlesPairs rc pt compVals t2.2.1 t2.2.2
+  (t0.1 ++ (t1.1 ++ (t2.1 ++ t3.1)), t3.2)
+
+/-- **`treesPairs` for the circuit statement's tree shapes** is
+`circuitPairs`: the spec's push order is the emitter's response order,
+tree by tree. -/
+theorem treesPairs_circuit (step : PointF) (rc : QM31) (pt prevPt : PointQ)
+    (ppVals traceVals compVals : List QM31)
+    (ppLogs traceLogs compLogs : List Nat)
+    (comps : List (List QM31 × List (QM31 × QM31) × Nat))
+    (hpp : ppVals.length ≤ ppLogs.length)
+    (htr : traceVals.length ≤ traceLogs.length)
+    (hcp : compVals.length ≤ compLogs.length) (pow : QM31) (fc : ℕ) :
+    treesPairs step rc pow fc
+      [(List.replicate ppVals.length [pt], ppVals.map fun v => [v], ppLogs),
+       (List.replicate traceVals.length [pt],
+        traceVals.map fun v => [v], traceLogs),
+       (comps.flatMap fun c => List.replicate c.1.length [pt]
+          ++ List.replicate c.2.1.length [prevPt, pt],
+        comps.flatMap fun c => (c.1.map fun v => [v])
+          ++ c.2.1.map fun p => [p.1, p.2],
+        comps.flatMap fun c => List.replicate c.1.length c.2.2
+          ++ List.replicate c.2.1.length c.2.2),
+       (List.replicate compVals.length [pt], compVals.map fun v => [v],
+        compLogs)]
+      = circuitPairs step rc pt prevPt ppVals traceVals comps compVals pow fc
+    := by
+  rw [treesPairs_cons, treesPairs_cons, treesPairs_cons, treesPairs_cons]
+  dsimp only
+  rw [treePairs_singles step rc pt ppVals ppLogs pow fc hpp,
+    treePairs_singles step rc pt traceVals traceLogs _ _ htr,
+    treePairs_interTree,
+    treePairs_singles step rc pt compVals compLogs _ _ hcp]
+  rw [show ∀ (p : QM31) (f : ℕ), treesPairs step rc p f [] = ([], p, f)
+    from fun _ _ => rfl]
+  dsimp only
+  rw [List.append_nil]
+  rfl
+
 end StwoVerifier.Quotients
