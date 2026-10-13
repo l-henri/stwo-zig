@@ -1,11 +1,19 @@
-# Report: verifier formalization, sessions of 2026-10-12/13
+# Report: verifier formalization, sessions of 2026-10-12/14
 
 Per `VERIFIER_FORMALIZATION_BRIEF.md` §6. Checkout: worktree
 `../stwo-zig-verifier-lean`, branch `formal/in-circuit-verifier` (cut from
 `4afa09dbf`), Lean project `formal/in-circuit-verifier/` (Lean 4.33.1 +
-Mathlib). Twenty-odd commits, nothing pushed. Every theorem checks with
-`#print axioms` = `propext, Classical.choice, Quot.sound` only; no
-`axiom` declarations, no `sorry`.
+Mathlib). Pushed to the fork `l-henri/stwo-zig` (draft PR #241); never to
+upstream. Every theorem checks with `#print axioms` = `propext,
+Classical.choice, Quot.sound` only; no `axiom` declarations, no `sorry`.
+
+**Headline (2026-10-14): scope B is proven.** `ScopeB.verify_sound`: if
+every gate of the modeled in-circuit `verify` with `CircuitStatement`
+holds, then the statement-level native acceptance predicate
+`circuitAccepts` accepts the native proof read off the gate assignment —
+under explicit statement well-formedness, statement-wire and per-instance
+Blake2s collision-freeness hypotheses (details and the remaining trust
+boundary in the Deliverable 5 section).
 
 ## Deliverable 1 — `NativeAccepts` + differential harness: **done**
 
@@ -219,7 +227,7 @@ on success the committed layers pair the proof layers one-to-one in
 order and, at the pinned fold step 1, the degree bound drops by exactly
 one per layer.
 
-## Deliverable 5 — `verify` with `CircuitStatement` (scope B): **spec + differential done**
+## Deliverable 5 — `verify` with `CircuitStatement` (scope B): **proven**
 
 The circuit statement is now concrete on the spec side, validated
 end-to-end against real circuit proofs.
@@ -274,14 +282,93 @@ Merkle, DEEP, FRI and PoW are exact on real proofs. The comparison is
 verdict-level (the in-circuit verifier rejects by unsatisfiability,
 without an error code).
 
-**Trusted boundary for scope B so far**: the recorded DAG equals the
-emitter's interpretation (differentially validated, not yet a theorem);
-the wire↔native proof conversion (`verifier_proof.zig`) is exercised, not
-modeled; gadget-level proofs of the statement phases (channel mixes,
-Blake2s circuit hash, claim checks) remain the scope-B/C port backlog
-(Merkle and channel gadgets).
+**Trusted boundary for scope B**: see "Remaining trust boundary" below —
+the gadget-level proofs of every statement phase are now done.
 
-### Response provenance (`collect_oods_responses` ↔ `treesPairs`), in progress
+### The scope-B theorem (`ScopeB.lean`)
+
+```
+theorem verify_sound (S : Stmt) (hS : WF S) (ρ : ℕ → QM31) (ppRoot outs : List ℕ) (n : ℕ)
+    (hpp  : RegsWords ρ ppRoot (S.ppRootWords.map (BitVec.ofNat 32)))
+    (hout : RegsWords ρ outs (S.outputDigest.map (BitVec.ofNat 32)))
+    (h : AllHold ρ (verifyG S.layout S.logSizes S.logTrace S.powBits S.nq ppRoot outs n).ops)
+    (hcoll : NoCollision ρ S g) :
+    circuitAccepts true S.config S.layout S.ppRootWords S.outputDigest
+      (ρ g.salt) (nonceNat (ρ g.interNonce)) (g.claimed.map ρ)
+      (rdCommitments ρ S g) (rdProof ρ S g) = .ok ()
+-- where g := (guessG S.nq (S.logTrace + 1) (n + 6)).res, the guessed proof registers
+```
+
+**The model.** `verifyG` (`VerifyG.lean`) is the whole of `verify.zig`
+`verify` at the pinned profile (blowup 1, fold step 1, last-layer bound
+0), as one emitter: constants, the guessed proof (`GuessPhase.lean`:
+QM31 guesses, M31 eval-domain samples, `guess_u32` hash words), then the
+six phases in the circuit's order — transcript to the OODS point
+(`PhaseTranscript`), relation uses + OODS mix + composition DAG check
+(`PhaseComposition`), DEEP draw + FRI commit + proof of work + query
+selection (`PhasePcs`), query-bit unpack + the four eval-domain
+decommitments with the trace/interaction query sorters
+(`PhaseDecommit`), the composed `compute_fri_input` (`PhaseDeep`), and
+the FRI decommitment walk (`PhaseFri`). Each phase has a soundness
+theorem stating what its gates give in spec terms.
+
+**The read-off proof** (`ReadOff.lean`): from `ρ` and the guessed
+registers, the native `circuitAccepts` arguments — the transcript is
+replayed spec-side to get the raw query positions; queried values are
+taken at the sorted unique positions from a representative raw query;
+the per-tree Merkle witnesses are `MerkleBatch.wits`; the FRI proof uses
+`FriBatch.fwit`/`wits` per layer and the last-layer constant.
+
+**Proof architecture.** Per tree, the circuit's per-query leaf + path
+gadgets give `pathRoot = root`; `TreeGlue.tree_verify` turns that into
+the spec's batched `Merkle.verify` (duplicate queries agree via Merkle
+consistency). `PhaseFriSpec` turns the per-(layer, query) FRI facts into
+an accepting `Fri.decommit` (`FriH.decommit`). `SpecGlue` gives the DEEP
+answers at the unique positions from the raw ones (row locality of the
+closed form), `Fri.commit` on the circuit's FRI transcript, and
+`Pcs.commit` under its height law. `ScopeB` chains
+`circuitAccepts_eq → nativeAccepts_eq → verifyValues_ok`.
+
+**Hypotheses, exactly.**
+- `WF S` (static facts about the request): `componentLogSizes` succeeds
+  with 11 sizes, each `< 2^5`; `18 ≤ logTrace ≤ 29` (the relation-use
+  gadget needs `logTrace + 1 > 18`; the domain cap is 2^30); `powBits ≤ 30`;
+  `0 < nQueries` with `(nq+7)/8 < P`; the preprocessed layout has the 45
+  circuit columns, nondecreasing log sizes (the committed order), each
+  `≤ logTrace`, and every `ppId` found; root/digest words are 8 u32s; the
+  largest component log is at least 1.
+- Statement wires: the preprocessed-root and output-digest input
+  registers carry the request's words (`RegsWords`). In the circuit these
+  are the outer statement's wires.
+- `NoCollision`: Blake2s is injective **on the messages this proof
+  hashes** — per tree, the node messages along the raw queries' paths;
+  per FRI layer, the node messages and the coset leaves. This is an
+  instance-level hypothesis, not global injectivity (which is false by
+  pigeonhole and would make the theorem vacuous). Note for downstream
+  users: a disjunct of the form `∨ ∃ a b, a ≠ b ∧ H a = H b` (as in
+  starked-bitcoin's `BlockRec.Collision`) is **provably true** for the same
+  reason, so a theorem concluding `P ∨ Collision` says nothing about `P`.
+
+**Remaining trust boundary.**
+1. `verifyG` is a hand-written Lean model of the Zig emitter, not
+   extracted from it. Register allocation and gate order differ (soundness
+   is order-independent: `AllHold` is a conjunction). Modeling liberties,
+   all semantically conservative: `ctx.constant` interning modeled as fresh
+   `.const` gates; `zero`/`one`/`u` and the sorter constants as `.const`;
+   the sort-key log sizes as constants (the circuit unpacks the constant
+   log-size SIMD); the query bits as `simd.unpack`. The model ↔ Zig gate
+   list correspondence is by construction and reading of the Zig, not a
+   theorem.
+2. The recorded composition DAG equals the emitter's interpretation
+   (validated by `aircheck` 7/7, not proven).
+3. The read-off native proof is defined from the gate assignment; its
+   relation to `verifier_proof.zig`'s wire↔native conversion is not
+   modeled.
+4. The spec itself (`circuitAccepts`/`NativeAccepts`) is validated
+   differentially against the Zig verifiers (112/112 statement-level, the
+   PCS/FRI batteries), not proven equal to them.
+
+### Response provenance (`collect_oods_responses` ↔ `treesPairs`)
 
 The gadget and spec sides of the OODS response layer are now proven up
 to the final register binding (`OodsResponses.lean`, `ResponseOrder.lean`):
