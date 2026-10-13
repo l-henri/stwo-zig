@@ -647,4 +647,94 @@ theorem friFinalize_sound {ρ : ℕ → QM31}
         apply right_ne_zero_of_mul hne
         exact List.prod_eq_zero (List.mem_map.mpr ⟨pr, h1, hzero⟩)
 
+/-! ### `Bound` from the walk -/
+
+/-- **A walked and finalized group is `Bound`** to the batch its fiber
+describes: the response registers are the global power registers at the
+fiber's indices paired with the response value registers. The batch
+data (its point, and per entry the running power and sample value) must
+match the fiber — that is the statement-level content `circuitPairs`
+and `zip_partition_perm` provide. -/
+theorem bound_of_walk {ρ : ℕ → QM31} {α : QM31} {k : ℕ × ℕ} {g : PG}
+    {gr : GroupRegs} {fiber : List (RespReg × ℕ)} {apRegs : List ℕ}
+    {b : Quotients.SampleBatch} {flatCols : List (List F)} {row : ℕ}
+    {valRegs : List ℕ} {N : ℕ}
+    (hgf : GFacts ρ α k g fiber)
+    (hff : FinFacts ρ (k, g) gr)
+    (hap : ∀ j, j < N →
+      ρ (apRegs.getD j 0) = (-2 : QM31) * Deep.uu * α ^ j)
+    (hidx : ∀ p ∈ fiber, p.2 < N)
+    (hPx : ρ k.1 = b.point.x) (hPy : ρ k.2 = b.point.y)
+    (hlenE : fiber.length = b.entries.length)
+    (hrand : ∀ j, j < fiber.length →
+      (b.entries.getD j default).randomCoeff
+        = α ^ (fiber.getD j default).2)
+    (hsv : ∀ j, j < fiber.length →
+      (b.entries.getD j default).sampleValue
+        = ρ (fiber.getD j default).1.value)
+    (hlenV : valRegs.length = fiber.length)
+    (hvals : ∀ j, j < fiber.length →
+      ρ (valRegs.getD j 0) = QM31.fromBase ((flatCols.getD
+        (b.entries.getD j default).columnIndex []).getD row 0)) :
+    Bound ρ flatCols row
+      ⟨gr, valRegs, fiber.map fun p => (apRegs.getD p.2 0, p.1.value), b⟩ := by
+  have hgd : gr.d = g.d := hff.1
+  have hge : gr.e = g.e := hff.2.1
+  have hgfr : gr.f = g.f := hff.2.2.1
+  have hgc : gr.coeffs = g.coeffs := hff.2.2.2.1
+  have hga : gr.aSum = g.aReg := hff.2.2.2.2.1
+  have hgb : ρ gr.b = ρ g.d * ρ g.vReg - ρ g.aReg * ρ k.2 := hff.2.2.2.2.2
+  have hgetDmem : ∀ j, j < fiber.length → fiber.getD j default ∈ fiber := by
+    intro j hj
+    rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj]
+    exact List.getElem_mem hj
+  have hrs : ∀ j, j < fiber.length →
+      ((fiber.map fun p => (apRegs.getD p.2 0, p.1.value)).getD j (0, 0))
+        = (apRegs.getD (fiber.getD j default).2 0,
+           (fiber.getD j default).1.value) :=
+    fun j hj => getD_map _ _ fiber j hj
+  have hmapV : (fiber.map fun p =>
+      ((-2 : QM31) * Deep.uu * α ^ p.2) * ρ p.1.value)
+      = (fiber.map fun p => (apRegs.getD p.2 0, p.1.value)).map
+          fun (a, v) => ρ a * ρ v := by
+    rw [List.map_map]
+    refine (List.map_congr_left fun p hp => ?_).symm
+    show ρ (apRegs.getD p.2 0) * ρ p.1.value = _
+    rw [hap p.2 (hidx p hp)]
+  have hmapA : (fiber.map fun p =>
+      ((-2 : QM31) * Deep.uu * α ^ p.2) * Deep.imQ (ρ p.1.value))
+      = (fiber.map fun p => (apRegs.getD p.2 0, p.1.value)).map
+          fun (a, v) => ρ a * Deep.imQ (ρ v) := by
+    rw [List.map_map]
+    refine (List.map_congr_left fun p hp => ?_).symm
+    show ρ (apRegs.getD p.2 0) * Deep.imQ (ρ p.1.value) = _
+    rw [hap p.2 (hidx p hp)]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> dsimp only
+  · rw [hgd, hgf.hd, hPy]
+  · rw [hge, hgf.he, hPx]
+  · rw [hgfr, hgf.hf, hPx, hPy]
+  · rw [hgc, hgf.hclen, List.length_map]
+  · intro i hi
+    rw [List.length_map] at hi
+    rw [hgc, hgf.hcoeff i hi, hrs i hi]
+    dsimp only
+    rw [hap (fiber.getD i default).2 (hidx _ (hgetDmem i hi)),
+      hgf.hd, hPy]
+  · rw [hga, hgf.ha, hmapA]
+  · rw [hgb, hgf.hv, hgf.ha, hgf.hd, hPy, hmapV, hmapA]
+  · rw [hlenV, List.length_map]
+  · rw [List.length_map, hlenE]
+  · intro i hi
+    rw [List.length_map] at hi
+    rw [hrs i hi]
+    dsimp only
+    rw [hrand i hi, hap (fiber.getD i default).2 (hidx _ (hgetDmem i hi))]
+  · intro i hi
+    rw [List.length_map] at hi
+    rw [hrs i hi]
+    dsimp only
+    rw [hsv i hi]
+  · intro i hi
+    rw [List.length_map] at hi
+    exact hvals i hi
 end StwoVerifier.Gadgets
