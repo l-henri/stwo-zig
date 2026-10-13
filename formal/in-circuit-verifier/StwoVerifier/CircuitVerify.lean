@@ -17,6 +17,10 @@ with `CircuitStatement`), stated over the native proof shape:
 3. `NativeAccepts` with `circuitAir` — composition draw, composition
    tree, OODS, PCS.
 
+The channel salt is taken as the QM31 the in-circuit verifier mixes (its
+wire is an unconstrained guess); the native proofs' integer salts are the
+case `(salt, 0, 0, 0)`, which `lake exe circuitcheck` passes.
+
 `harness/circuitharness.zig` proves the R7 fibonacci circuit with the
 in-repo prover and records the shipping verdict
 (`circuit_cpu.verify.verifyProofBytes`, the verification circuit built
@@ -123,7 +127,7 @@ def interColumnLogSizes (logSizes : List Nat) : List Nat :=
 transcript and claim checks, then `NativeAccepts` with `circuitAir`. -/
 def circuitAccepts (m31 : Bool) (config : Pcs.PcsConfig)
     (layout : List (String × Nat)) (ppRootWords outputDigest : List Nat)
-    (channelSalt interactionPowNonce : Nat) (claimedSums : List QM31)
+    (channelSalt : QM31) (interactionPowNonce : Nat) (claimedSums : List QM31)
     (commitments : List Channel.Bytes) (proof : Pcs.Proof) :
     Except VError Unit := do
   let some logSizes := componentLogSizes layout | throw .invalidStructure
@@ -135,8 +139,7 @@ def circuitAccepts (m31 : Bool) (config : Pcs.PcsConfig)
   if logSizes.any fun l => l ≥ 2 ^ 5 ∨ logTrace < l then throw .invalidStructure
   if ¬ relationUsesOk logSizes then throw .invalidStructure
   -- Transcript: salt, FRI config.
-  let s := Channel.mixFelts m31 Channel.init
-    [QM31.fromM31s ((channelSalt : Nat) : F) 0 0 0]
+  let s := Channel.mixFelts m31 Channel.init [channelSalt]
   let s := Channel.mixFelts m31 s
     [QM31.fromM31s (config.powBits : Nat) (config.logBlowupFactor : Nat)
       (config.nQueries : Nat) (config.logLastLayerDegreeBound : Nat),

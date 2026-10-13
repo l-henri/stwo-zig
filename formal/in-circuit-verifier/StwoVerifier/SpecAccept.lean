@@ -114,7 +114,7 @@ open CircuitVerify in
 checks and transcript steps. -/
 theorem circuitAccepts_eq (m31 : Bool) (config : Pcs.PcsConfig)
     (layout : List (String × Nat)) (ppRootWords outputDigest : List Nat)
-    (channelSalt interactionPowNonce : Nat) (claimedSums : List QM31)
+    (channelSalt : QM31) (interactionPowNonce : Nat) (claimedSums : List QM31)
     (commitments : List Channel.Bytes) (proof : Pcs.Proof)
     (logSizes : List Nat) (t0 t1 t2 : List Pcs.Tree) (s3 s6 s7 s8 : Channel.St)
     (z alpha pub : QM31)
@@ -124,8 +124,7 @@ theorem circuitAccepts_eq (m31 : Bool) (config : Pcs.PcsConfig)
       config.traceLiftingLogSize - config.logBlowupFactor < l)) = false)
     (hru : relationUsesOk logSizes = true)
     (hc0 : Pcs.commit m31 config []
-      (Channel.mixFelts m31 (Channel.mixFelts m31 Channel.init
-        [QM31.fromM31s ((channelSalt : Nat) : F) 0 0 0])
+      (Channel.mixFelts m31 (Channel.mixFelts m31 Channel.init [channelSalt])
         [QM31.fromM31s (config.powBits : Nat) (config.logBlowupFactor : Nat)
           (config.nQueries : Nat) (config.logLastLayerDegreeBound : Nat),
          QM31.fromM31s (config.foldStep : Nat) 0 0 0])

@@ -115,7 +115,8 @@ def main (args : List String) : IO UInt32 := do
     let commitments := ((jArr (jField (jField caseJson "proof") "commitments")).map
       (parseHex ∘ jStr)).toList
     let spec := match CircuitVerify.circuitAccepts m31 config layout ppRootWords
-        outputDigest salt nonce claimedSums commitments proof with
+        outputDigest (QM31.fromM31s ((salt : Nat) : F) 0 0 0) nonce claimedSums commitments
+        proof with
       | .ok () => "accept"
       | .error e => verdictName e
     let specAccepts := spec = "accept"
