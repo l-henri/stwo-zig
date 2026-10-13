@@ -61,3 +61,4 @@ import StwoVerifier.DeepComposite
 import StwoVerifier.ResponseLayout
 import StwoVerifier.MerklePathBridge
 import StwoVerifier.GuessGadgets
+import StwoVerifier.PhaseTranscript
