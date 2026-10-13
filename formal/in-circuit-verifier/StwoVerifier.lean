@@ -49,3 +49,4 @@ import StwoVerifier.PowGadget
 import StwoVerifier.MerkleGadgets
 import StwoVerifier.MerkleBatch
 import StwoVerifier.FriBatch
+import StwoVerifier.StatementGadgets
