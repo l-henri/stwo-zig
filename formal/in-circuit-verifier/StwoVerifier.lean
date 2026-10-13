@@ -43,3 +43,4 @@ import StwoVerifier.GroupedRows
 import StwoVerifier.FriGroups
 import StwoVerifier.BlakeGadgets
 import StwoVerifier.BlakeBridge
+import StwoVerifier.BlakePack
