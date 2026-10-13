@@ -118,4 +118,46 @@ theorem twiddleChain1_spec {ρ : ℕ → QM31} {zero count len : ℕ}
       baseSeq_eq_lineFoldPoints hb hL2 hL30 ℓ (by omega)] at this
     exact this
 
+set_option maxHeartbeats 800000 in
+/-- **`friDecommit1_sound` at the spec fold coordinates**: the layer
+walk's `Chain1` and the spec's last-layer check, with every twiddle
+hypothesis stated against `specFoldCoord` per query. -/
+theorem friDecommit1_atSpec {ρ : ℕ → QM31} {one nQ lastCoeff n : ℕ}
+    {layers : List (ℕ × List (ℕ × ℕ × ℕ × ℕ))} {vals : List ℕ}
+    {L : ℕ} (bq : ℕ → ℕ → ℕ)
+    (hone : ρ one = 1)
+    (c : Fri.Committed) (c0 : QM31) (hpoly : c.lastLayerPoly = [c0])
+    (hc : ρ lastCoeff = c0) (positions : List Nat)
+    (hplen : positions.length = nQ)
+    (hv : vals.length = nQ)
+    (hql : ∀ l, l < layers.length → (layers.getD l default).2.length = nQ)
+    (hbits : ∀ l, l < layers.length → ∀ i, i < nQ →
+      (ρ ((layers.getD l default).2.getD i default).2.2.1 = 0 ∨
+       ρ ((layers.getD l default).2.getD i default).2.2.1 = 1))
+    (htw : ∀ l, l < layers.length → ∀ i, i < nQ →
+      ρ ((layers.getD l default).2.getD i default).2.2.2
+        * QM31.fromBase (specFoldCoord (bq i) L l) = 1)
+    (h : AllHold ρ (friDecommit1 one layers vals lastCoeff n).ops) :
+    Chain1 ρ layers
+      ((List.range layers.length).map fun l =>
+        (List.range nQ).map fun i => specFoldCoord (bq i) L l)
+      vals (friLayers1 one layers vals n).res ∧
+    Fri.lastLayerCheck c positions
+      ((friLayers1 one layers vals n).res.map ρ) = .ok () := by
+  refine friDecommit1_sound hone c c0 hpoly hc positions hplen
+    (by simp) hv hql hbits ?_ h
+  intro l hl i hi
+  have hrl : (List.range layers.length).getD l default = l := by
+    rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by simpa using hl)]
+    simp
+  have hri : (List.range nQ).getD i default = i := by
+    rw [List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem (by simpa using hi)]
+    simp
+  rw [Gadgets.getD_map _ ([] : List F) (List.range layers.length) l
+    (by simpa using hl), hrl,
+    Gadgets.getD_map _ (0 : F) (List.range nQ) i (by simpa using hi), hri]
+  exact htw l hl i hi
+
 end StwoVerifier.Bridge
