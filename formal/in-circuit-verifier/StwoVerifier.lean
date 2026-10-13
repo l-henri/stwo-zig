@@ -57,3 +57,4 @@ import StwoVerifier.TranscriptGadgets
 import StwoVerifier.ColumnOrder
 import StwoVerifier.QuerySorter
 import StwoVerifier.SpecAccept
+import StwoVerifier.DeepComposite
