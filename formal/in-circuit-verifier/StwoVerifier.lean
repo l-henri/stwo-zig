@@ -33,3 +33,5 @@ import StwoVerifier.TwiddleChain
 import StwoVerifier.FoldBridge
 import StwoVerifier.TwiddleSpec
 import StwoVerifier.BatchesFlat
+import StwoVerifier.CircuitAirData
+import StwoVerifier.CircuitAirEval

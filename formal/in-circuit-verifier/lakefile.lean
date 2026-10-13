@@ -11,3 +11,6 @@ lean_lib StwoVerifier
 
 lean_exe diffcheck where
   root := `DiffCheck
+
+lean_exe aircheck where
+  root := `AirCheck
