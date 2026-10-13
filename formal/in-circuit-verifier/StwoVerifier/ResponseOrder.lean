@@ -140,4 +140,62 @@ theorem treePairs_append (step : PointF) (rc : QM31) :
     rw [← List.append_assoc]
     rfl
 
+/-! ### Interaction-tree components -/
+
+/-- One interaction component's pairs: the single-sample run, then the
+four cumulative-sum columns, all at the component's column log. -/
+noncomputable def componentPairs (step : PointF) (rc : QM31) (pt prevPt : PointQ)
+    (sv : List QM31) (dv : List (QM31 × QM31)) (L : Nat) (pow : QM31)
+    (fc : ℕ) : List (PointQ × NumeratorData) × QM31 × ℕ :=
+  let s := singlesPairs rc pt sv pow fc
+  let d := doublesPairs step rc pt prevPt dv (List.replicate dv.length L)
+    s.2.1 s.2.2
+  (s.1 ++ d.1, d.2)
+
+theorem treePairs_component (step : PointF) (rc : QM31) (pt prevPt : PointQ)
+    (sv : List QM31) (dv : List (QM31 × QM31)) (L : Nat) (pow : QM31)
+    (fc : ℕ) :
+    treePairs step rc pow fc
+      ((List.replicate sv.length [pt]
+          ++ List.replicate dv.length [prevPt, pt]).zip
+        (((sv.map fun v => [v]) ++ dv.map fun p => [p.1, p.2]).zip
+          (List.replicate sv.length L ++ List.replicate dv.length L)))
+      = componentPairs step rc pt prevPt sv dv L pow fc := by
+  rw [List.zip_append (by simp), List.zip_append (by simp), treePairs_append,
+    treePairs_singles step rc pt sv (List.replicate sv.length L) pow fc
+      (by simp),
+    treePairs_doubles step rc pt prevPt dv (List.replicate dv.length L) _ _
+      (by simp)]
+  rfl
+
+/-- The whole interaction tree, component by component. -/
+noncomputable def interTreePairs (step : PointF) (rc : QM31)
+    (pt prevPt : PointQ) :
+    List (List QM31 × List (QM31 × QM31) × Nat) → QM31 → ℕ →
+    List (PointQ × NumeratorData) × QM31 × ℕ
+  | [], pow, fc => ([], pow, fc)
+  | c :: rest, pow, fc =>
+    let h := componentPairs step rc pt prevPt c.1 c.2.1 c.2.2 pow fc
+    let r := interTreePairs step rc pt prevPt rest h.2.1 h.2.2
+    (h.1 ++ r.1, r.2)
+
+theorem treePairs_interTree (step : PointF) (rc : QM31) (pt prevPt : PointQ) :
+    ∀ (comps : List (List QM31 × List (QM31 × QM31) × Nat)) (pow : QM31)
+      (fc : ℕ),
+      treePairs step rc pow fc
+        ((comps.flatMap fun c => List.replicate c.1.length [pt]
+            ++ List.replicate c.2.1.length [prevPt, pt]).zip
+          ((comps.flatMap fun c => (c.1.map fun v => [v])
+              ++ c.2.1.map fun p => [p.1, p.2]).zip
+            (comps.flatMap fun c => List.replicate c.1.length c.2.2
+              ++ List.replicate c.2.1.length c.2.2)))
+        = interTreePairs step rc pt prevPt comps pow fc
+  | [], pow, fc => rfl
+  | c :: rest, pow, fc => by
+    rw [List.flatMap_cons, List.flatMap_cons, List.flatMap_cons,
+      List.zip_append (by simp), List.zip_append (by simp), treePairs_append,
+      treePairs_component,
+      treePairs_interTree step rc pt prevPt rest _ _]
+    rfl
+
 end StwoVerifier.Quotients
