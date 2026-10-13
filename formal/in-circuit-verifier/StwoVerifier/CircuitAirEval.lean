@@ -31,21 +31,21 @@ open CircuitAirData
 node's operand is constrained nonzero by the surrounding circuit). -/
 def qinv (x : QM31) : QM31 := (x.inv?).getD QM31.zero
 
+/-- One DAG node's value from the inputs and the earlier node values. -/
+def dagStep (inputs : Array QM31) (vals : Array QM31) (n : Nat × Nat × Nat) : QM31 :=
+  match n with
+  | (0, a, _) =>
+    let c := consts.getD a (0, 0, 0, 0)
+    QM31.fromM31s (c.1 : Nat) (c.2.1 : Nat) (c.2.2.1 : Nat) (c.2.2.2 : Nat)
+  | (1, a, _) => inputs.getD a QM31.zero
+  | (2, a, b) => vals.getD a QM31.zero + vals.getD b QM31.zero
+  | (3, a, b) => vals.getD a QM31.zero - vals.getD b QM31.zero
+  | (4, a, b) => vals.getD a QM31.zero * vals.getD b QM31.zero
+  | (_, a, _) => qinv (vals.getD a QM31.zero)
+
 /-- Evaluate the DAG: node values in node order. -/
-def evalNodes (inputs : Array QM31) : Array QM31 := Id.run do
-  let mut vals : Array QM31 := Array.mkEmpty nodes.size
-  for n in nodes do
-    let v := match n with
-      | (0, a, _) =>
-        let c := consts.getD a (0, 0, 0, 0)
-        QM31.fromM31s (c.1 : Nat) (c.2.1 : Nat) (c.2.2.1 : Nat) (c.2.2.2 : Nat)
-      | (1, a, _) => inputs.getD a QM31.zero
-      | (2, a, b) => vals.getD a QM31.zero + vals.getD b QM31.zero
-      | (3, a, b) => vals.getD a QM31.zero - vals.getD b QM31.zero
-      | (4, a, b) => vals.getD a QM31.zero * vals.getD b QM31.zero
-      | (_, a, _) => qinv (vals.getD a QM31.zero)
-    vals := vals.push v
-  return vals
+def evalNodes (inputs : Array QM31) : Array QM31 :=
+  nodes.foldl (fun vals n => vals.push (dagStep inputs vals n)) (Array.mkEmpty nodes.size)
 
 /-- The accumulated constraint sum (pre-vanishing-division). -/
 def constraintSum (inputs : Array QM31) : QM31 :=
