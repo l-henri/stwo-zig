@@ -521,6 +521,18 @@ fn writeLean(gpa: std.mem.Allocator, path: []const u8, rec: *const Recorded) !vo
     }
     try w.writeAll("]\n\n");
 
+    try w.writeAll("/-- Trace / interaction column counts per component, `ComponentList` order. -/\ndef traceShape : Array Nat := #[");
+    for (component_list.component_facts.toArray(), 0..) |facts, i| {
+        if (i != 0) try w.writeAll(", ");
+        try w.print("{d}", .{facts.trace_columns});
+    }
+    try w.writeAll("]\ndef interShape : Array Nat := #[");
+    for (component_list.component_facts.toArray(), 0..) |facts, i| {
+        if (i != 0) try w.writeAll(", ");
+        try w.print("{d}", .{facts.interaction_columns});
+    }
+    try w.writeAll("]\n\n");
+
     // Assign constant indices in node order.
     for (rec.ctx.nodes.items) |node| {
         if (node == .constant) {

@@ -35,3 +35,4 @@ import StwoVerifier.TwiddleSpec
 import StwoVerifier.BatchesFlat
 import StwoVerifier.CircuitAirData
 import StwoVerifier.CircuitAirEval
+import StwoVerifier.CircuitAir

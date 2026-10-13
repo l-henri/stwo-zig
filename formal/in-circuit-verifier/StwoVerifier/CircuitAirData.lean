@@ -40,6 +40,10 @@ def ppIds : Array String := #["eq_in0_address", "eq_in1_address", "qm31_ops_add_
 /-- `(component, bit)` of each n-instances-bit atom, in atom order. -/
 def nbitAtoms : Array (Nat × Nat) := #[(5, 16), (7, 8), (8, 14), (9, 18), (10, 16)]
 
+/-- Trace / interaction column counts per component, `ComponentList` order. -/
+def traceShape : Array Nat := #[4, 12, 20, 4, 52, 2, 16, 1, 1, 1, 1]
+def interShape : Array Nat := #[4, 8, 24, 12, 52, 4, 32, 4, 4, 4, 4]
+
 /-- Constant pool, as M31 limb quadruples. -/
 def consts : Array (Nat × Nat × Nat × Nat) := #[(0, 0, 0, 0), (1, 0, 0, 0), (378353459, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1), (2, 0, 0, 0), (256, 0, 0, 0), (112558620, 0, 0, 0), (1008385708, 0, 0, 0), (32767, 0, 0, 0), (65536, 0, 0, 0), (32768, 0, 0, 0), (521092554, 0, 0, 0), (4096, 0, 0, 0), (648362599, 0, 0, 0), (45448144, 0, 0, 0), (16, 0, 0, 0), (128, 0, 0, 0), (512, 0, 0, 0), (95781001, 0, 0, 0), (62225763, 0, 0, 0), (1024, 0, 0, 0), (2048, 0, 0, 0), (3072, 0, 0, 0)]
 
