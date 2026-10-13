@@ -68,3 +68,4 @@ import StwoVerifier.PhaseDecommit
 import StwoVerifier.PhaseDeep
 import StwoVerifier.PhaseFri
 import StwoVerifier.PhaseFriSpec
+import StwoVerifier.SpecGlue

@@ -186,7 +186,11 @@ theorem phase5G_sound {ρ : ℕ → QM31} {zero one : ℕ} {sizeBits : List Simd
       traceAt comps compAt Ls valReg n).ops) :
     Quotients.friAnswers cls sp sv (ρ oq) ps queried (logTrace + 1)
       = .ok ((phase5G zero one (canonicStep logTrace) sizeBits oods points nq oq ppAt
-        traceAt comps compAt Ls valReg n).res.map ρ) := by
+        traceAt comps compAt Ls valReg n).res.map ρ) ∧
+    (∀ b ∈ batches, Deep.imQ b.point.y ≠ 0) ∧
+    (∀ b ∈ batches, ∀ e ∈ b.entries, e.columnIndex < queried.flatten.length) ∧
+    (∀ b ∈ batches, ∀ pos : ℕ, Quotients.denominator b.point
+      ((canonicDomain (logTrace + 1)).at' (bitReverseIndex pos (logTrace + 1))) ≠ 0) := by
   obtain ⟨b0, rest, rfl⟩ : ∃ b0 rest, sizeBits = b0 :: rest := by
     cases sizeBits with
     | nil => simp at hsbl

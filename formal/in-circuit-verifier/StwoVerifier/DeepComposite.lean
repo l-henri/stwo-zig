@@ -258,7 +258,11 @@ theorem deepComposite_spec {ρ : ℕ → QM31} {imMask zero alpha : ℕ} {rs : L
         = QM31.fromBase ((queried.flatten.getD (fcs.getD j 0) []).getD i 0))
     (h : AllHold ρ (deepCompositeG imMask zero alpha rs fcs qpts valReg n).ops) :
     Quotients.friAnswers cls sp sv α ps queried L
-      = .ok ((deepCompositeG imMask zero alpha rs fcs qpts valReg n).res.map ρ) := by
+      = .ok ((deepCompositeG imMask zero alpha rs fcs qpts valReg n).res.map ρ) ∧
+    (∀ b ∈ batches, Deep.imQ b.point.y ≠ 0) ∧
+    (∀ b ∈ batches, ∀ e ∈ b.entries, e.columnIndex < queried.flatten.length) ∧
+    (∀ b ∈ batches, ∀ pos : ℕ, Quotients.denominator b.point ((canonicDomain L).at'
+      (bitReverseIndex pos L)) ≠ 0) := by
   set g := friGroups imMask zero alpha rs n with hgdef
   set fin := friFinalize g.res.1 g.next with hfindef
   rw [show (deepCompositeG imMask zero alpha rs fcs qpts valReg n).ops =
@@ -307,15 +311,18 @@ theorem deepComposite_spec {ρ : ℕ → QM31} {imMask zero alpha : ℕ} {rs : L
     exact hfc p.2 (by
       obtain ⟨k, hk, rfl⟩ := List.getElem_of_mem hp
       simp at hk ⊢; omega)
-  have hdenS : ∀ b ∈ batches, ∀ pos ∈ ps,
+  have hdenAll : ∀ b ∈ batches, ∀ pos : ℕ,
       Quotients.denominator b.point ((canonicDomain L).at'
         (bitReverseIndex pos L)) ≠ 0 := by
-    intro b hb pos _
+    intro b hb pos
     obtain ⟨r, hr', hpt⟩ := hspecPt b hb
     have hq' := Bridge.onCircle_toPoint ((canonicDomain L).indexAt (bitReverseIndex pos L))
     have := Deep.den_nonzero b.point ((canonicDomain L).at' (bitReverseIndex pos L))
       (by rw [hpt]; exact honc r hr') hq' (him b hb)
     exact this
+  have hdenS : ∀ b ∈ batches, ∀ pos ∈ ps,
+      Quotients.denominator b.point ((canonicDomain L).at'
+        (bitReverseIndex pos L)) ≠ 0 := fun b hb pos _ => hdenAll b hb pos
   have hentlen : entries.length = qpts.length := by simp [hentries]
   have hentD : ∀ i, i < entries.length → entries.getD i default
       = (qpts.getD i default, bindingsOf ρ α rs fcs valReg g.res.1 fin.res g.res.2.2 i) := by
@@ -396,6 +403,7 @@ theorem deepComposite_spec {ρ : ℕ → QM31} {imMask zero alpha : ℕ} {rs : L
     entries fin.next hbuild hcols him hidx hpos hdenS hzero (by rw [hentlen, hqlen])
     (fun i hi => by rw [hentD i hi]; exact hq i (by rw [← hentlen]; exact hi))
     hB hgroups hne hperm (by rw [hrows]; exact hr)
+  refine ⟨?_, him, hidx, hdenAll⟩
   rw [hmain, hrows]
   rfl
 
