@@ -1,7 +1,8 @@
 //! Scope-B differential vectors: real circuit proofs against the Lean
 //! `circuitAccepts` spec.
 //!
-//! Proves the R7 fibonacci circuit with the in-repo circuit prover under
+//! Proves the R7 digest-output circuits (fibonacci, triple_xor,
+//! m31_to_u32, blake_g_gate) with the in-repo circuit prover under
 //! the pinned profile (Blake2sM31 channel, plain Blake2s Merkle,
 //! `defaultPcsConfig`: blowup 1, fold step 1, last layer 0, PoW 10,
 //! 3 queries), then runs the shipping acceptance predicate — the
@@ -52,7 +53,8 @@
 //!     -Mstwo_core=src/core/mod.zig -O ReleaseSafe
 //!
 //! Run (from the repo root):
-//!   ./circuitharness formal/in-circuit-verifier/harness/circuitvectors.json
+//!   ./circuitharness formal/in-circuit-verifier/harness
+//! (writes circuitvectors_<circuit>.json into the given directory)
 
 const std = @import("std");
 const core = @import("stwo_core");
@@ -252,41 +254,152 @@ fn applyProofTamper(proof: anytype, tamper: Tamper) void {
     }
 }
 
+/// A seeded random value flip on a field the wire conversion reads from
+/// the proof, with an exact inverse.
+const FuzzOp = union(enum) {
+    sampled: [3]usize,
+    queried: [2]usize,
+    tree_root: usize,
+    fri_root: usize,
+    last_layer: usize,
+    claimed: usize,
+    salt,
+    interaction_nonce,
+    pow_nonce,
+};
+
+fn pickFuzz(stark: anytype, random: std.Random) FuzzOp {
+    switch (random.intRangeAtMost(u8, 0, 8)) {
+        0 => {
+            const tree = random.uintLessThan(usize, stark.sampled_values.items.len);
+            const col = random.uintLessThan(usize, stark.sampled_values.items[tree].len);
+            const idx = random.uintLessThan(usize, stark.sampled_values.items[tree][col].len);
+            return .{ .sampled = .{ tree, col, idx } };
+        },
+        1 => {
+            const col = random.uintLessThan(usize, stark.queried_values.items[1].len);
+            const idx = random.uintLessThan(usize, stark.queried_values.items[1][col].len);
+            return .{ .queried = .{ col, idx } };
+        },
+        2 => return .{ .tree_root = 1 + random.uintLessThan(usize, 3) },
+        3 => return .{ .fri_root = random.uintLessThan(usize, stark.fri_proof.inner_layers.len + 1) },
+        4 => return .{ .last_layer = random.uintLessThan(usize, stark.fri_proof.last_layer_poly.coefficients().len) },
+        5 => return .{ .claimed = random.uintLessThan(usize, component_list.N_COMPONENTS) },
+        6 => return .salt,
+        7 => return .interaction_nonce,
+        else => return .pow_nonce,
+    }
+}
+
+fn applyFuzz(proof: anytype, op: FuzzOp, invert: bool) void {
+    const stark = &proof.stark_proof.proof.commitment_scheme_proof;
+    const delta = if (invert) QM31.zero().sub(QM31.one()) else QM31.one();
+    switch (op) {
+        .sampled => |at| {
+            const col = stark.sampled_values.items[at[0]][at[1]];
+            col[at[2]] = col[at[2]].add(delta);
+        },
+        .queried => |at| {
+            const col = stark.queried_values.items[1][at[0]];
+            col[at[1]] = if (invert) col[at[1]].sub(M31.one()) else col[at[1]].add(M31.one());
+        },
+        .tree_root => |tree| stark.commitments.items[tree][0] ^= 1,
+        .fri_root => |layer| {
+            if (layer == 0) {
+                stark.fri_proof.first_layer.commitment[0] ^= 1;
+            } else {
+                stark.fri_proof.inner_layers[layer - 1].commitment[0] ^= 1;
+            }
+        },
+        .last_layer => |idx| {
+            const coefficients = stark.fri_proof.last_layer_poly.coefficientsMut();
+            coefficients[idx] = coefficients[idx].add(delta);
+        },
+        .claimed => |comp| {
+            var sums = proof.claimed_sums.toArray();
+            sums[comp] = sums[comp].add(delta);
+            proof.claimed_sums = @TypeOf(proof.claimed_sums).fromArray(sums);
+        },
+        .salt => proof.channel_salt = if (invert) proof.channel_salt -% 1 else proof.channel_salt +% 1,
+        .interaction_nonce => proof.interaction_pow_nonce = if (invert) proof.interaction_pow_nonce -% 1 else proof.interaction_pow_nonce +% 1,
+        .pow_nonce => stark.proof_of_work = if (invert) stark.proof_of_work -% 1 else stark.proof_of_work +% 1,
+    }
+}
+
 // ---------------------------------------------------------------------------
 
-pub fn main() !void {
-    var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
-    const gpa = gpa_state.allocator();
+/// Runs one case: converts the (possibly tampered) proof to wire bytes,
+/// takes the shipping verdict, and writes the case JSON. Returns whether
+/// the verdict accepted.
+fn runCase(
+    w: anytype,
+    gpa: std.mem.Allocator,
+    arena: std.mem.Allocator,
+    table: *const circuit.air_eval.component_table.Table,
+    request: *const verify_request.VerifyRequest,
+    proof: anytype,
+    label: []const u8,
+    first: bool,
+) !bool {
+    if (!first) try w.writeAll(",");
+    var converted = try circuit_cpu.verifier_proof.prepare(gpa, proof);
+    const bytes = try converted.serialize(arena);
+    converted.deinit();
+    const verdict = try circuit_cpu.verify.verifyProofBytes(gpa, table, request, bytes);
+    const native_json = try proofJson(arena, &proof.stark_proof.proof.commitment_scheme_proof);
+
+    try w.print("{{\"label\":\"{s}\",\"accepted\":{},", .{ label, verdict.isAccepted() });
+    switch (verdict) {
+        .accepted => try w.writeAll("\"stage\":null,"),
+        .rejected => |why| try w.print("\"stage\":\"{s}:{s}\",", .{ @tagName(why.stage), @errorName(why.reason) }),
+    }
+    try w.writeAll("\"request\":{\"output_digest\":[");
+    for (request.output_digest, 0..) |word, i| {
+        if (i > 0) try w.writeAll(",");
+        try w.print("{d}", .{word});
+    }
+    try w.writeAll("],\"preprocessed_root\":[");
+    for (request.preprocessed_root, 0..) |word, i| {
+        if (i > 0) try w.writeAll(",");
+        try w.print("{d}", .{word});
+    }
+    try w.writeAll("],\"layout_log_sizes\":[");
+    for (request.preprocessed_column_log_sizes, 0..) |column, i| {
+        if (i > 0) try w.writeAll(",");
+        try w.print("{d}", .{column.log_size});
+    }
+    try w.print("]}},\"channel_salt\":{d},\"interaction_pow_nonce\":{d},\"claimed_sums\":[", .{
+        proof.channel_salt, proof.interaction_pow_nonce,
+    });
+    for (proof.claimed_sums.toArray(), 0..) |sum, i| {
+        if (i > 0) try w.writeAll(",");
+        try qm31Json(w, sum);
+    }
+    try w.print("],\"proof\":{s}}}", .{native_json});
+    return verdict.isAccepted();
+}
+
+fn runCircuit(
+    gpa: std.mem.Allocator,
+    table: *const circuit.air_eval.component_table.Table,
+    bundle: *const circuit_cpu.air.Bundle,
+    which: circuit_testing.contexts.TestContext,
+    out_path: []const u8,
+) !void {
     var arena_state = std.heap.ArenaAllocator.init(gpa);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    var args = std.process.args();
-    _ = args.next();
-    const out_path = args.next() orelse "formal/in-circuit-verifier/harness/circuitvectors.json";
-
-    // The in-circuit evaluator table (ground-truth verifier).
-    const projection_bytes = try std.fs.cwd().readFileAlloc(arena, "vectors/circuit/official/compiled_air_constraints_v1.bin", 8 << 20);
-    var projection = try circuit.air_eval.projection.parse(gpa, projection_bytes);
-    defer projection.deinit();
-    var table = try circuit.air_eval.circuit_components.build(gpa, &projection);
-    defer table.deinit();
-
-    // The fibonacci circuit, preprocessed, proved under the default config.
-    var ctx = try circuit_testing.contexts.build(QM31, gpa, .fibonacci);
+    var ctx = try circuit_testing.contexts.build(QM31, gpa, which);
     defer ctx.deinit();
     try ctx.finalize(false);
     var pp = try preprocessed.PreprocessedCircuit.preprocessContext(QM31, gpa, &ctx);
     defer pp.deinit(gpa);
     if (!try ctx.isCircuitValid()) return error.InvalidTestCircuit;
 
-    const bundle_bytes = try std.fs.cwd().readFileAlloc(arena, circuit_cpu.air.bundle_path, 1 << 20);
-    var bundle = try circuit_cpu.air.parse(gpa, bundle_bytes);
-    defer bundle.deinit();
-
     var observer = Observer{ .allocator = arena };
     const pcs_config = circuit_cpu.prove.defaultPcsConfig(pp.traceLogSize());
-    var proof = try Prover.prove(gpa, ctx.values(), &pp, &bundle, pcs_config, .{}, &observer);
+    var proof = try Prover.prove(gpa, ctx.values(), &pp, bundle, pcs_config, .{}, &observer);
     defer proof.deinit();
 
     var columns: [preprocessed.N_PREPROCESSED_COLUMNS]verify_request.Column = undefined;
@@ -307,7 +420,6 @@ pub fn main() !void {
     var out: std.Io.Writer.Allocating = .init(arena);
     const w = &out.writer;
 
-    // Header: profile, statement data, transcript step digests.
     try w.print(
         "{{\"profile\":{{\"m31_channel\":true,\"pow_bits\":{d},\"log_blowup\":{d}," ++
             "\"log_last_layer\":{d},\"n_queries\":{d},\"fold_step\":{d}," ++
@@ -327,18 +439,6 @@ pub fn main() !void {
         if (i > 0) try w.writeAll(",");
         try w.print("{{\"id\":\"{s}\",\"log_size\":{d}}}", .{ entry.id, entry.log_size });
     }
-    try w.writeAll("],\"output_digest\":[");
-    for (output_digest, 0..) |word, i| {
-        if (i > 0) try w.writeAll(",");
-        try w.print("{d}", .{word});
-    }
-    try w.print("],\"channel_salt\":{d},\"interaction_pow_nonce\":{d},\"interaction_pow_bits\":{d},\"claimed_sums\":[", .{
-        proof.channel_salt, proof.interaction_pow_nonce, component_list.INTERACTION_POW_BITS,
-    });
-    for (proof.claimed_sums.toArray(), 0..) |sum, i| {
-        if (i > 0) try w.writeAll(",");
-        try qm31Json(w, sum);
-    }
     try w.writeAll("],\"component_log_sizes\":[");
     for (proof.component_log_sizes.toArray(), 0..) |log_size, i| {
         if (i > 0) try w.writeAll(",");
@@ -350,9 +450,7 @@ pub fn main() !void {
     try qm31Json(w, observer.z);
     try w.writeAll(",\"alpha\":");
     try qm31Json(w, observer.alpha);
-    try w.writeAll(",\"log_trace_size\":");
-    try w.print("{d}", .{pp.traceLogSize()});
-    try w.writeAll("},\"prover_steps\":[");
+    try w.print(",\"log_trace_size\":{d}}},\"prover_steps\":[", .{pp.traceLogSize()});
     for (observer.steps.items, 0..) |entry, i| {
         if (i > 0) try w.writeAll(",");
         try w.print("{{\"step\":\"{s}\",\"digest\":\"{s}\"}}", .{ @tagName(entry[0]), &std.fmt.bytesToHex(entry[1], .lower) });
@@ -363,9 +461,7 @@ pub fn main() !void {
     var n_reject: usize = 0;
     inline for (std.meta.fields(Tamper), 0..) |tamper_field, case_index| {
         const tamper: Tamper = @enumFromInt(tamper_field.value);
-        if (case_index > 0) try w.writeAll(",");
 
-        // Request copy, tampered where the case says so.
         var case_columns = columns;
         var request = base_request;
         request.preprocessed_column_log_sizes = &case_columns;
@@ -379,87 +475,19 @@ pub fn main() !void {
         }
 
         applyProofTamper(&proof, tamper);
-        var converted = try circuit_cpu.verifier_proof.prepare(gpa, &proof);
-        const bytes = try converted.serialize(arena);
-        converted.deinit();
-        const verdict = try circuit_cpu.verify.verifyProofBytes(gpa, &table, &request, bytes);
-        const native_json = try proofJson(arena, &proof.stark_proof.proof.commitment_scheme_proof);
+        const accepted = try runCase(w, gpa, arena, table, &request, &proof, tamper_field.name, case_index == 0);
+        if (accepted) n_accept += 1 else n_reject += 1;
+        revertProofTamper(&proof, tamper);
+    }
 
-        try w.print("{{\"label\":\"{s}\",\"accepted\":{},", .{ tamper_field.name, verdict.isAccepted() });
-        switch (verdict) {
-            .accepted => {
-                n_accept += 1;
-                try w.writeAll("\"stage\":null,");
-            },
-            .rejected => |why| {
-                n_reject += 1;
-                try w.print("\"stage\":\"{s}:{s}\",", .{ @tagName(why.stage), @errorName(why.reason) });
-            },
-        }
-        try w.writeAll("\"request\":{\"output_digest\":[");
-        for (request.output_digest, 0..) |word, i| {
-            if (i > 0) try w.writeAll(",");
-            try w.print("{d}", .{word});
-        }
-        try w.writeAll("],\"preprocessed_root\":[");
-        for (request.preprocessed_root, 0..) |word, i| {
-            if (i > 0) try w.writeAll(",");
-            try w.print("{d}", .{word});
-        }
-        try w.writeAll("],\"layout_log_sizes\":[");
-        for (case_columns, 0..) |column, i| {
-            if (i > 0) try w.writeAll(",");
-            try w.print("{d}", .{column.log_size});
-        }
-        try w.print("]}},\"channel_salt\":{d},\"interaction_pow_nonce\":{d},\"claimed_sums\":[", .{
-            proof.channel_salt, proof.interaction_pow_nonce,
-        });
-        for (proof.claimed_sums.toArray(), 0..) |sum, i| {
-            if (i > 0) try w.writeAll(",");
-            try qm31Json(w, sum);
-        }
-        try w.print("],\"proof\":{s}}}", .{native_json});
-
-        // Revert (every tamper is an involution or has a direct inverse).
-        switch (tamper) {
-            .none, .request_output_digest, .request_preprocessed_root, .request_eq_log_size => {},
-            .channel_salt => proof.channel_salt -%= 1,
-            .interaction_pow_nonce => proof.interaction_pow_nonce -%= 1,
-            .pow_nonce => proof.stark_proof.proof.commitment_scheme_proof.proof_of_work -%= 1,
-            else => {
-                const stark = &proof.stark_proof.proof.commitment_scheme_proof;
-                switch (tamper) {
-                    .claimed_sum => proof.claimed_sums.eq = proof.claimed_sums.eq.sub(QM31.one()),
-                    .sampled_preprocessed => stark.sampled_values.items[0][0][0] = stark.sampled_values.items[0][0][0].sub(QM31.one()),
-                    .sampled_trace => stark.sampled_values.items[1][0][0] = stark.sampled_values.items[1][0][0].sub(QM31.one()),
-                    .sampled_interaction_prev => for (stark.sampled_values.items[2]) |col| {
-                        if (col.len == 2) {
-                            col[0] = col[0].sub(QM31.one());
-                            break;
-                        }
-                    },
-                    .sampled_interaction_oods => for (stark.sampled_values.items[2]) |col| {
-                        if (col.len == 2) {
-                            col[1] = col[1].sub(QM31.one());
-                            break;
-                        }
-                    },
-                    .sampled_composition => stark.sampled_values.items[3][0][0] = stark.sampled_values.items[3][0][0].sub(QM31.one()),
-                    .trace_root => stark.commitments.items[1][0] ^= 1,
-                    .interaction_root => stark.commitments.items[2][0] ^= 1,
-                    .composition_root => stark.commitments.items[3][0] ^= 1,
-                    .queried_value => {
-                        const col = stark.queried_values.items[1][0];
-                        col[0] = col[0].sub(M31.one());
-                    },
-                    .last_layer => {
-                        const coefficients = stark.fri_proof.last_layer_poly.coefficientsMut();
-                        coefficients[0] = coefficients[0].sub(QM31.one());
-                    },
-                    else => unreachable,
-                }
-            },
-        }
+    for (0..10) |fuzz_index| {
+        var prng = std.Random.DefaultPrng.init(0xc1cc_0000 + @as(u64, fuzz_index));
+        const op = pickFuzz(&proof.stark_proof.proof.commitment_scheme_proof, prng.random());
+        applyFuzz(&proof, op, false);
+        const label = try std.fmt.allocPrint(arena, "fuzz_{d}", .{fuzz_index});
+        const accepted = try runCase(w, gpa, arena, table, &base_request, &proof, label, false);
+        if (accepted) n_accept += 1 else n_reject += 1;
+        applyFuzz(&proof, op, true);
     }
 
     try w.writeAll("]}\n");
@@ -467,4 +495,70 @@ pub fn main() !void {
     std.debug.print("wrote {s}: {d} cases ({d} accepted, {d} rejected)\n", .{
         out_path, n_accept + n_reject, n_accept, n_reject,
     });
+}
+
+/// Inverse of `applyProofTamper`.
+fn revertProofTamper(proof: anytype, tamper: Tamper) void {
+    const stark = &proof.stark_proof.proof.commitment_scheme_proof;
+    switch (tamper) {
+        .none, .request_output_digest, .request_preprocessed_root, .request_eq_log_size => {},
+        .channel_salt => proof.channel_salt -%= 1,
+        .interaction_pow_nonce => proof.interaction_pow_nonce -%= 1,
+        .pow_nonce => stark.proof_of_work -%= 1,
+        .claimed_sum => proof.claimed_sums.eq = proof.claimed_sums.eq.sub(QM31.one()),
+        .sampled_preprocessed => stark.sampled_values.items[0][0][0] = stark.sampled_values.items[0][0][0].sub(QM31.one()),
+        .sampled_trace => stark.sampled_values.items[1][0][0] = stark.sampled_values.items[1][0][0].sub(QM31.one()),
+        .sampled_interaction_prev => for (stark.sampled_values.items[2]) |col| {
+            if (col.len == 2) {
+                col[0] = col[0].sub(QM31.one());
+                break;
+            }
+        },
+        .sampled_interaction_oods => for (stark.sampled_values.items[2]) |col| {
+            if (col.len == 2) {
+                col[1] = col[1].sub(QM31.one());
+                break;
+            }
+        },
+        .sampled_composition => stark.sampled_values.items[3][0][0] = stark.sampled_values.items[3][0][0].sub(QM31.one()),
+        .trace_root => stark.commitments.items[1][0] ^= 1,
+        .interaction_root => stark.commitments.items[2][0] ^= 1,
+        .composition_root => stark.commitments.items[3][0] ^= 1,
+        .queried_value => {
+            const col = stark.queried_values.items[1][0];
+            col[0] = col[0].sub(M31.one());
+        },
+        .last_layer => {
+            const coefficients = stark.fri_proof.last_layer_poly.coefficientsMut();
+            coefficients[0] = coefficients[0].sub(QM31.one());
+        },
+    }
+}
+
+pub fn main() !void {
+    var gpa_state = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = gpa_state.allocator();
+    var arena_state = std.heap.ArenaAllocator.init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var args = std.process.args();
+    _ = args.next();
+    const out_dir = args.next() orelse "formal/in-circuit-verifier/harness";
+
+    const projection_bytes = try std.fs.cwd().readFileAlloc(arena, "vectors/circuit/official/compiled_air_constraints_v1.bin", 8 << 20);
+    var projection = try circuit.air_eval.projection.parse(gpa, projection_bytes);
+    defer projection.deinit();
+    var table = try circuit.air_eval.circuit_components.build(gpa, &projection);
+    defer table.deinit();
+
+    const bundle_bytes = try std.fs.cwd().readFileAlloc(arena, circuit_cpu.air.bundle_path, 1 << 20);
+    var bundle = try circuit_cpu.air.parse(gpa, bundle_bytes);
+    defer bundle.deinit();
+
+    const circuits = [_]circuit_testing.contexts.TestContext{ .fibonacci, .triple_xor, .m31_to_u32, .blake_g_gate };
+    inline for (circuits) |which| {
+        const out_path = try std.fmt.allocPrint(arena, "{s}/circuitvectors_{s}.json", .{ out_dir, @tagName(which) });
+        try runCircuit(gpa, &table, &bundle, which, out_path);
+    }
 }
