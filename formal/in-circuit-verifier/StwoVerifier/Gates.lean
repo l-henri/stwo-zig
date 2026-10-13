@@ -70,6 +70,9 @@ inductive Op where
   /-- A BlakeGGate: `(o, o+1, o+2, o+3) = G(a, b, c, d, f0, f1)` over
   `u32` limb wires. -/
   | blakeG (o a b c d f0 f1 : ℕ)
+  /-- A permutation gate: the output values are a permutation (as a
+  multiset) of the input values. -/
+  | perm (outs ins : List ℕ)
   deriving Repr
 
 /-- What one gate enforces on an assignment (`Circuit::check` +
@@ -100,6 +103,7 @@ def Holds (ρ : ℕ → QM31) : Op → Prop
         (wordOf (ρ c)) (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).2.2.1 ∧
       ρ (o + 3) = packW (Blake2s.mix (wordOf (ρ a)) (wordOf (ρ b))
         (wordOf (ρ c)) (wordOf (ρ d)) (wordOf (ρ f0)) (wordOf (ρ f1))).2.2.2)
+  | .perm outs ins => (ins.map ρ).Perm (outs.map ρ)
 
 /-- All emitted gates hold. -/
 def AllHold (ρ : ℕ → QM31) (ops : List Op) : Prop := ∀ op ∈ ops, Holds ρ op

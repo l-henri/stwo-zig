@@ -54,3 +54,5 @@ import StwoVerifier.RelationUses
 import StwoVerifier.LogupGadgets
 import StwoVerifier.DagGadget
 import StwoVerifier.TranscriptGadgets
+import StwoVerifier.ColumnOrder
+import StwoVerifier.QuerySorter
