@@ -47,3 +47,4 @@ import StwoVerifier.BlakePack
 import StwoVerifier.ChannelGadgets
 import StwoVerifier.PowGadget
 import StwoVerifier.MerkleGadgets
+import StwoVerifier.MerkleBatch
