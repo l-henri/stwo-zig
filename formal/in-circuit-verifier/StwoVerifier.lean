@@ -40,3 +40,4 @@ import StwoVerifier.CircuitVerify
 import StwoVerifier.OodsResponses
 import StwoVerifier.ResponseOrder
 import StwoVerifier.GroupedRows
+import StwoVerifier.FriGroups
