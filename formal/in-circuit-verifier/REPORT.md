@@ -341,6 +341,34 @@ final binding) and the composed emitter, where the `deepRows` result
 registers are fed to `friDecommit1` as its first-layer values by
 construction.
 
+### The in-circuit Blake2s, proven (`BlakeGadgets.lean`, `BlakeBridge.lean`)
+
+The gate model now carries the two dedicated Blake gates exactly as
+`Circuit::check` enforces them — `Op.tripleXor` (u32-limb inputs, the
+output packs the XOR) and `Op.blakeG` (four consecutive outputs packing
+RFC 7693's G, stated against the spec's `Blake2s.mix`) — and the whole
+`blake2s_u32s` emitter is walked on top:
+
+- `gStepG_sound` / `stepsG_sound`: the register state tracks the spec's
+  working vector word for word through one G gate and through all 80
+  applications (the flattened round loops are `Blake2s.steps`).
+- `compressG_sound`: one block — IV constants with byte counter and
+  final flag, rounds, chaining xors — is `Blake2s.compress`.
+- `blocksG_sound` + `hashWordsL_eq_hashBlocks`: the block loop is the
+  word-level chain, and with the words read off the zero-padded bytes
+  that chain **is** the byte-level `Blake2s.hashBlocks` (schedules agree
+  as whole functions; non-last counters are `t + 64`, the last is
+  `nBytes`; the empty message is one all-zero block).
+- `blake2sU32sG_sound`: end to end — message registers carrying the
+  byte message's words hash to registers carrying the digest words of
+  `Blake2s.blake2s bytes` (`hashBlocks_congr` discharges that only the
+  eight chaining words matter).
+
+Remaining in this port: `unpack_qm31s_to_u32_words` and
+`reduce_hash_value` (felt ↔ word plumbing), the channel methods
+(`mix_commitment`, `mix_qm31s`, the draws, the proof of work) against
+the spec channel, and the Merkle path gadget.
+
 ## Open questions (brief §7)
 
 1. **Hints needing canonicity**: yes. `extract_bits` is the central one —
