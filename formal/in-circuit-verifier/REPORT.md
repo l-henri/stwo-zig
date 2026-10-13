@@ -281,6 +281,48 @@ modeled; gadget-level proofs of the statement phases (channel mixes,
 Blake2s circuit hash, claim checks) remain the scope-B/C port backlog
 (Merkle and channel gadgets).
 
+### Response provenance (`collect_oods_responses` ↔ `treesPairs`), in progress
+
+The gadget and spec sides of the OODS response layer are now proven up
+to the final register binding (`OodsResponses.lean`, `ResponseOrder.lean`):
+
+- **Period generators** (`oods.zig` `period_generators`): the
+  doubling-and-accumulate chain's lane is the bit-weighted coordinate
+  sum (`periodChain_lane` / `periodGensG_lane`, via the step gadget's
+  embedded-point invariant), and one-hot size bits select the
+  `2^k`-fold trace generator (`bitCombFull_onehot`,
+  `periodGensG_lane_pow`). The embedding lemmas (`intoQ_add/double/
+  onCircle`: the base-field inclusion is a circle homomorphism) carry
+  `double_point`'s on-circle soundness through the scalar chain.
+- **Sample points**: `unpackFrom_sound` (`simd.unpack` lifts each lane),
+  `periodGeneratorsG_sound`/`_getD_pow` (each component's generator
+  point register embeds its bit-weighted sum; one-hot ⇒
+  `2^k · traceGen`), `addPointsList_sound` (the periodicity points
+  `oods + gen`), `prevPointG_sound` (`oods + conj(traceGen)`), and
+  `canonicStep_double_shift`: the spec's periodicity shift at the
+  blowup-extended column log, `canonicStep(l+1)·2^(k+1)`, **is** the
+  circuit's `traceGen(l)·2^k` — the extension absorbs the lifting
+  offset.
+- **Push order** (`ResponseOrder.lean`): `treesPairs` computed into
+  closed recursions for the circuit's column shapes —
+  `singlesPairs`/`doublesPairs`/`componentPairs`/`interTreePairs`,
+  capped by `treesPairs_circuit`: the spec's whole push-order pair list
+  is `circuitPairs`, matching `collect_oods_responses`' emission order
+  pair by pair (periodicity duplicate, previous row, OODS; one power
+  step per pair; one global chain through the four trees).
+- **Grouping**: the circuit batches by point *wire* id, the spec by
+  point *value*, and these genuinely differ — two fixed-table
+  components share log size 16, so their periodicity point values
+  coincide under distinct wires. `partition_flatMap_perm` /
+  `zip_partition_perm` close the gap through `rowSum_perm`: any stable
+  partition of the response list into key fibers permutes the
+  push-order pair list, so the row sums agree regardless of grouping.
+
+Remaining for this arc: the register binding (response value registers
+= `circuitPairs` entries at matching positions, `Bound` discharge per
+wire group via the existing `bound_of_groupSetup`/`chain_alphas`), and
+the `deepRows`→`friLayers1` threading.
+
 ## Open questions (brief §7)
 
 1. **Hints needing canonicity**: yes. `extract_bits` is the central one —
