@@ -64,3 +64,4 @@ import StwoVerifier.GuessGadgets
 import StwoVerifier.PhaseTranscript
 import StwoVerifier.PhaseComposition
 import StwoVerifier.PhasePcs
+import StwoVerifier.PhaseDecommit
