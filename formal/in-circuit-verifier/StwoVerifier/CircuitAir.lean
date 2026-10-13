@@ -52,7 +52,7 @@ def maskPoints (pt : PointQ) (maxLogDegreeBound : Nat) :
         ++ List.replicate 4 [prevPoint pt maxLogDegreeBound, pt] ]
 
 /-- One sample from a column's sample list, or a shape error. -/
-private def single (column : List QM31) : Except VError QM31 :=
+def single (column : List QM31) : Except VError QM31 :=
   match column with
   | [v] => .ok v
   | _ => throw .shapeMismatch
@@ -61,6 +61,18 @@ private def single (column : List QM31) : Except VError QM31 :=
 (`ppIds` order); the sampled tree 0 is in layout (size-sorted) order. -/
 def ppPositions (layout : List (String × Nat)) : List Nat :=
   ppIds.toList.map fun id => (layout.findIdx? (·.1 = id)).getD layout.length
+
+/-- Per interaction column (`ComponentList` order): whether it is a
+cumulative sum (the last four columns of its component). -/
+def cumulativeKinds : List Bool :=
+  interShape.toList.flatMap fun n => (List.range n).map fun i => decide (i + 4 ≥ n)
+
+/-- One interaction column's samples: `[at_oods]`, or `[at_prev, at_oods]`
+for a cumulative sum. -/
+def interSample : List QM31 × Bool → Except VError (QM31 × Option QM31)
+  | ([v], false) => .ok (v, none)
+  | ([p, v], true) => .ok (v, some p)
+  | _ => .error .shapeMismatch
 
 /-- The flat DAG input vector from the proof's sampled values and the
 statement data. Sampled-value shape: tree 0 the 45 preprocessed
@@ -78,27 +90,15 @@ def flatInputs (pt : PointQ) (sampledValues : List (List (List QM31)))
   -- Interaction: at_oods per column in order, at_prev per cumulative sum.
   let interCols := sampledValues.getD 2 []
   if interCols.length ≠ nInter then throw .shapeMismatch
-  let mut inter : Array QM31 := Array.mkEmpty nInter
-  let mut prev : Array QM31 := Array.mkEmpty nPrev
-  let mut colAt : Nat := 0
-  for n in interShape do
-    for i in List.range n do
-      match interCols.getD (colAt + i) [] with
-      | [v] =>
-        if i + 4 ≥ n then throw .shapeMismatch
-        inter := inter.push v
-      | [p, v] =>
-        if i + 4 < n then throw .shapeMismatch
-        inter := inter.push v
-        prev := prev.push p
-      | _ => throw .shapeMismatch
-    colAt := colAt + n
+  let interPairs ← (interCols.zip cumulativeKinds).mapM interSample
+  let inter := interPairs.map (·.1)
+  let prev := interPairs.filterMap (·.2)
   if claimedSums.length ≠ interShape.size ∨ logSizes.length ≠ interShape.size then
     throw .shapeMismatch
   let sizes := logSizes.map fun l => QM31.fromBase ((2 ^ l : Nat) : F)
   let nbits := nbitAtoms.toList.map fun cb =>
     if logSizes.getD cb.1 0 = cb.2 then QM31.one else QM31.zero
-  return (#[pt.x] ++ pp.toArray ++ trace.toArray ++ inter ++ prev
+  return (#[pt.x] ++ pp.toArray ++ trace.toArray ++ inter.toArray ++ prev.toArray
     ++ #[randomness, z, alpha] ++ claimedSums.toArray ++ sizes.toArray
     ++ nbits.toArray)
 
