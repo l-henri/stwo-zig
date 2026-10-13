@@ -444,4 +444,97 @@ theorem compressG_sound {ρ : ℕ → QM31} {hRegs mRegs : List ℕ}
   rw [this]
   rfl
 
+/-! ### The block loop -/
+
+/-- The word-level block chain, over the eight chaining words as a
+list: per block the spec compression of the 16-word slice, the byte
+counter at `min nBytes (64·(i+1))`, the final flag on the last block
+(`blake2s_u32s`' loop, words instead of bytes). -/
+def hashWordsL (ws : List Blake2s.Word) (nBytes : ℕ) :
+    ℕ → ℕ → List Blake2s.Word → List Blake2s.Word
+  | 0, _, hl => hl
+  | k + 1, i, hl =>
+    hashWordsL ws nBytes k (i + 1)
+      ((List.range 8).map fun j =>
+        Blake2s.compress (fun l => hl.getD l 0)
+          (fun l => ((ws.drop (16 * i)).take 16).getD l 0)
+          (min nBytes ((i + 1) * 64)) (k = 0) j)
+
+theorem hashWordsL_length (ws : List Blake2s.Word) (nBytes : ℕ) :
+    ∀ (k i : ℕ) (hl : List Blake2s.Word), hl.length = 8 →
+      (hashWordsL ws nBytes k i hl).length = 8
+  | 0, _, _, h8 => h8
+  | k + 1, i, hl, _ => by
+    show (hashWordsL ws nBytes k (i + 1) _).length = 8
+    exact hashWordsL_length ws nBytes k (i + 1) _ (by simp)
+
+/-- A contiguous slice of a tracked register list is tracked. -/
+theorem regsWords_slice {ρ : ℕ → QM31} {regs : List ℕ}
+    {ws : List Blake2s.Word} (h : RegsWords ρ regs ws) (a b : ℕ) :
+    RegsWords ρ ((regs.drop a).take b) ((ws.drop a).take b) := by
+  refine ⟨by simp [h.len], fun j hj => ?_⟩
+  rw [List.length_take, List.length_drop] at hj
+  have hjb : j < b := by omega
+  have hja : a + j < regs.length := by omega
+  rw [List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hjb,
+    List.getElem?_drop, ← List.getD_eq_getElem?_getD]
+  rw [List.getD_eq_getElem?_getD (l := (ws.drop a).take b),
+    List.getElem?_take, if_pos hjb, List.getElem?_drop,
+    ← List.getD_eq_getElem?_getD]
+  exact h.val (a + j) hja
+
+/-- The block loop: `k` remaining blocks from index `i`. -/
+noncomputable def blocksG (padded : List ℕ) (nBytes : ℕ) :
+    ℕ → ℕ → List ℕ → ℕ → Out (List ℕ)
+  | 0, _, hRegs, n => ⟨[], hRegs, n⟩
+  | k + 1, i, hRegs, n =>
+    let c := compressG hRegs ((padded.drop (16 * i)).take 16)
+      (min nBytes ((i + 1) * 64)) (k = 0) n
+    let r := blocksG padded nBytes k (i + 1) c.res c.next
+    ⟨c.ops ++ r.ops, r.res, r.next⟩
+
+theorem blocksG_sound {ρ : ℕ → QM31} {padded : List ℕ}
+    {ws : List Blake2s.Word} {nBytes : ℕ}
+    (hp : RegsWords ρ padded ws) :
+    ∀ (k i : ℕ) (hRegs : List ℕ) (hws : List Blake2s.Word) (n : ℕ),
+      RegsWords ρ hRegs hws → hws.length = 8 →
+      16 * (i + k) ≤ ws.length →
+      AllHold ρ (blocksG padded nBytes k i hRegs n).ops →
+      RegsWords ρ (blocksG padded nBytes k i hRegs n).res
+        (hashWordsL ws nBytes k i hws)
+  | 0, i, hRegs, hws, n, hh, _, _, _ => hh
+  | k + 1, i, hRegs, hws, n, hh, hh8, hlen, h => by
+    rw [show (blocksG padded nBytes (k + 1) i hRegs n).ops =
+      (compressG hRegs ((padded.drop (16 * i)).take 16)
+        (min nBytes ((i + 1) * 64)) (k = 0) n).ops ++
+        (blocksG padded nBytes k (i + 1)
+          (compressG hRegs ((padded.drop (16 * i)).take 16)
+            (min nBytes ((i + 1) * 64)) (k = 0) n).res
+          (compressG hRegs ((padded.drop (16 * i)).take 16)
+            (min nBytes ((i + 1) * 64)) (k = 0) n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨hc, hr⟩ := h
+    have hslice := regsWords_slice hp (16 * i) 16
+    have hslen : ((ws.drop (16 * i)).take 16).length = 16 := by
+      rw [List.length_take, List.length_drop]
+      omega
+    obtain ⟨hclen, hcval⟩ := compressG_sound hh hslice hh8 hslen hc
+    have hcrw : RegsWords ρ
+        (compressG hRegs ((padded.drop (16 * i)).take 16)
+          (min nBytes ((i + 1) * 64)) (k = 0) n).res
+        ((List.range 8).map fun j =>
+          Blake2s.compress (fun l => hws.getD l 0)
+            (fun l => ((ws.drop (16 * i)).take 16).getD l 0)
+            (min nBytes ((i + 1) * 64)) (k = 0) j) := by
+      refine ⟨by simp [hclen], fun j hj => ?_⟩
+      have hj8 : j < 8 := by omega
+      rw [getD_map' _ (0 : Blake2s.Word) (List.range 8) j (by simpa using hj8),
+        show (List.range 8).getD j default = j from by
+          rw [List.getD_eq_getElem?_getD, List.getElem?_range hj8]; rfl]
+      exact hcval j hj8
+    have ih := blocksG_sound hp k (i + 1) _ _ _ hcrw (by simp)
+      (by omega) hr
+    show RegsWords ρ (blocksG padded nBytes k (i + 1) _ _).res _
+    exact ih
+
 end StwoVerifier.Gadgets
