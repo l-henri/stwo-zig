@@ -14,3 +14,6 @@ lean_exe diffcheck where
 
 lean_exe aircheck where
   root := `AirCheck
+
+lean_exe circuitcheck where
+  root := `CircuitCheck

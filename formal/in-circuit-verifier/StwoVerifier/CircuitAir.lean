@@ -57,16 +57,22 @@ private def single (column : List QM31) : Except VError QM31 :=
   | [v] => .ok v
   | _ => throw .shapeMismatch
 
+/-- The position in `layout` of each canonical preprocessed column
+(`ppIds` order); the sampled tree 0 is in layout (size-sorted) order. -/
+def ppPositions (layout : List (String × Nat)) : List Nat :=
+  ppIds.toList.map fun id => (layout.findIdx? (·.1 = id)).getD layout.length
+
 /-- The flat DAG input vector from the proof's sampled values and the
 statement data. Sampled-value shape: tree 0 the 45 preprocessed
-columns, tree 1 the 114 trace columns, tree 2 the 152 interaction
-columns with the cumulative sums carrying `[at_prev, at_oods]`. -/
+columns in layout order, tree 1 the 114 trace columns and tree 2 the
+152 interaction columns in `ComponentList` order, the cumulative sums
+carrying `[at_prev, at_oods]`. -/
 def flatInputs (pt : PointQ) (sampledValues : List (List (List QM31)))
     (randomness : QM31) (z alpha : QM31) (claimedSums : List QM31)
-    (logSizes : List Nat) : Except VError (Array QM31) := do
-  let pp ← match sampledValues.getD 0 [] with
-    | cols => if cols.length ≠ nPp then throw .shapeMismatch else
-        cols.mapM single
+    (logSizes : List Nat) (ppPos : List Nat) : Except VError (Array QM31) := do
+  let ppCols := sampledValues.getD 0 []
+  if ppCols.length ≠ nPp ∨ ppPos.length ≠ nPp then throw .shapeMismatch
+  let pp ← ppPos.mapM fun j => single (ppCols.getD j [])
   let trace ← (sampledValues.getD 1 []).mapM single
   if trace.length ≠ nTrace then throw .shapeMismatch
   -- Interaction: at_oods per column in order, at_prev per cumulative sum.
@@ -102,14 +108,14 @@ returned evaluation also demands the recorded `eq` side conditions
 (the generated components' fixed-size checks): the in-circuit verify
 enforces them as `eq` gates, so a native run that violates them has no
 satisfying circuit. -/
-def circuitAir (z alpha : QM31) (claimedSums : List QM31)
-    (logSizes : List Nat) : Air where
+def circuitAir (layout : List (String × Nat)) (z alpha : QM31)
+    (claimedSums : List QM31) (logSizes : List Nat) : Air where
   compositionLogDegreeBound := (logSizes.foldl max 0) + 1
   compositionLogSplit := 1
   maskPoints := maskPoints
   evalComposition := fun pt sampledValues randomness maxLogDegreeBound => do
     let inputs ← flatInputs pt sampledValues randomness z alpha
-      claimedSums logSizes
+      claimedSums logSizes (ppPositions layout)
     if ¬ eqConditionsHold inputs then throw .shapeMismatch
     return composition inputs maxLogDegreeBound
 
