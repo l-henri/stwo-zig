@@ -67,4 +67,42 @@ theorem columnOrder_lex (logs : List ℕ) : (columnOrder logs).Pairwise (Lex log
       left; omega
   · exact absurd hab Bool.false_ne_true
 
+/-- **Uniqueness**: a `Lex`-sorted permutation of the indices is the
+column order. -/
+theorem columnOrder_unique {logs l : List ℕ} (hp : l.Perm (List.range logs.length))
+    (hl : l.Pairwise (Lex logs)) : l = columnOrder logs := by
+  refine hp.trans (columnOrder_perm logs).symm |>.eq_of_pairwise ?_ hl (columnOrder_lex logs)
+  intro a _ b _ h1 h2
+  unfold Lex at h1 h2
+  omega
+
+/-- The column order only compares log sizes: a uniform shift keeps it. -/
+theorem columnOrder_shift (logs : List ℕ) (b : ℕ) :
+    columnOrder (logs.map (· + b)) = columnOrder logs := by
+  symm
+  refine columnOrder_unique (by rw [List.length_map]; exact columnOrder_perm logs) ?_
+  refine (columnOrder_lex logs).imp_of_mem fun {i j} hi hj h => ?_
+  have hi' : i < logs.length := List.mem_range.mp ((columnOrder_perm logs).mem_iff.mp hi)
+  have hj' : j < logs.length := List.mem_range.mp ((columnOrder_perm logs).mem_iff.mp hj)
+  unfold Lex at h ⊢
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_eq_getElem hi',
+    List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_eq_getElem hj']
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi',
+    List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hj'] at h
+  simp only [Option.map_some, Option.getD_some] at h ⊢
+  omega
+
+/-- Nondecreasing log sizes: the column order is the identity. -/
+theorem columnOrder_mono {logs : List ℕ}
+    (hm : ∀ i j, i < j → j < logs.length → logs.getD i 0 ≤ logs.getD j 0) :
+    columnOrder logs = List.range logs.length := by
+  symm
+  refine columnOrder_unique (List.Perm.refl _) ?_
+  rw [List.pairwise_iff_getElem]
+  intro i j hi hj hij
+  simp only [List.getElem_range]
+  unfold Lex
+  have := hm i j hij (by simpa using hj)
+  omega
+
 end StwoVerifier.ColumnOrder

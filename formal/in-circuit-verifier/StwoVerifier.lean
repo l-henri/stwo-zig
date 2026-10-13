@@ -69,3 +69,4 @@ import StwoVerifier.PhaseDeep
 import StwoVerifier.PhaseFri
 import StwoVerifier.PhaseFriSpec
 import StwoVerifier.SpecGlue
+import StwoVerifier.GuessPhase
