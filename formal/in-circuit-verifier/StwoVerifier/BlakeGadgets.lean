@@ -249,4 +249,199 @@ theorem stepsG_sound {ρ : ℕ → QM31} {mRegs : List ℕ}
     show (Blake2s.gStep _ _ _ _).length = 16
     rw [gStep_length, ihlen]
 
+/-! ### One block's compression -/
+
+private theorem getD_map' {α β : Type} [Inhabited α] (f : α → β) (dflt : β)
+    (l : List α) (i : ℕ) (hi : i < l.length) :
+    (l.map f).getD i dflt = f (l.getD i default) := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map,
+    List.getElem?_eq_getElem hi, List.getD_eq_getElem?_getD,
+    List.getElem?_eq_getElem hi]
+  rfl
+
+private theorem list_ext_getD {l1 l2 : List Blake2s.Word}
+    (hlen : l1.length = l2.length)
+    (h : ∀ j, j < l1.length → l1.getD j 0 = l2.getD j 0) : l1 = l2 := by
+  refine List.ext_getElem hlen fun j h1 h2 => ?_
+  have h' := h j h1
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h1] at h'
+  rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h2] at h'
+  simpa using h'
+
+/-- The constant working-vector words `v[8..16]` (`blake2s_u32s`' IV
+constants with the byte counter and final flag folded in; `t1 = 0`). -/
+def ivInit (t : ℕ) (f : Bool) (j : ℕ) : Blake2s.Word :=
+  if j = 12 then Blake2s.IV 4 ^^^ BitVec.ofNat 32 t
+  else if j = 13 then Blake2s.IV 5 ^^^ BitVec.ofNat 32 (t / 2 ^ 32)
+  else if j = 14 then Blake2s.IV 6 ^^^ (if f then BitVec.allOnes 32 else 0)
+  else Blake2s.IV (j - 8)
+
+theorem initV_getD (hFun : ℕ → Blake2s.Word) (t : ℕ) (f : Bool) (j : ℕ)
+    (hj : j < 16) :
+    (Blake2s.initV hFun t f).getD j 0
+      = if j < 8 then hFun j else ivInit t f j := by
+  unfold Blake2s.initV
+  rw [getD_map' _ (0 : Blake2s.Word) (List.range 16) j (by simpa using hj),
+    show (List.range 16).getD j default = j from by
+      rw [List.getD_eq_getElem?_getD,
+        List.getElem?_eq_getElem (by simpa using hj)]
+      simp]
+  rfl
+
+/-- The chaining xor row: `h'[i] = prev_h[i] ^^^ v[i] ^^^ v[i + 8]`. -/
+def xorChain (hRegs vRegs : List ℕ) : List ℕ → ℕ → Out (List ℕ)
+  | [], n => ⟨[], [], n⟩
+  | i :: rest, n =>
+    let x := tripleXorG (hRegs.getD i 0) (vRegs.getD i 0)
+      (vRegs.getD (i + 8) 0) n
+    let r := xorChain hRegs vRegs rest x.next
+    ⟨x.ops ++ r.ops, x.res :: r.res, r.next⟩
+
+theorem xorChain_sound {ρ : ℕ → QM31} {hRegs vRegs : List ℕ}
+    {hws vws : List Blake2s.Word}
+    (hh : RegsWords ρ hRegs hws) (hv : RegsWords ρ vRegs vws) :
+    ∀ (idxs : List ℕ) (n : ℕ),
+      (∀ i ∈ idxs, i < hRegs.length ∧ i + 8 < vRegs.length) →
+      AllHold ρ (xorChain hRegs vRegs idxs n).ops →
+      (xorChain hRegs vRegs idxs n).res.length = idxs.length ∧
+      ∀ p, p < idxs.length →
+        ρ ((xorChain hRegs vRegs idxs n).res.getD p 0)
+          = packW (hws.getD (idxs.getD p 0) 0
+              ^^^ vws.getD (idxs.getD p 0) 0
+              ^^^ vws.getD (idxs.getD p 0 + 8) 0)
+  | [], n, _, _ => ⟨rfl, fun p hp => absurd hp (by simp)⟩
+  | i :: rest, n, hbound, h => by
+    rw [show (xorChain hRegs vRegs (i :: rest) n).ops =
+      (tripleXorG (hRegs.getD i 0) (vRegs.getD i 0)
+        (vRegs.getD (i + 8) 0) n).ops ++
+        (xorChain hRegs vRegs rest
+          (tripleXorG (hRegs.getD i 0) (vRegs.getD i 0)
+            (vRegs.getD (i + 8) 0) n).next).ops from rfl,
+      allHold_append] at h
+    obtain ⟨hx, hrest⟩ := h
+    obtain ⟨hi1, hi2⟩ := hbound i List.mem_cons_self
+    obtain ⟨ihlen, ihval⟩ := xorChain_sound hh hv rest _
+      (fun i' hi' => hbound i' (List.mem_cons_of_mem _ hi')) hrest
+    refine ⟨?_, fun p hp => ?_⟩
+    · show (xorChain hRegs vRegs rest _).res.length + 1 = rest.length + 1
+      rw [ihlen]
+    cases p with
+    | zero =>
+      show ρ (tripleXorG (hRegs.getD i 0) (vRegs.getD i 0)
+        (vRegs.getD (i + 8) 0) n).res = _
+      rw [tripleXorG_sound hx, hh.val i hi1, hv.val i (by omega),
+        hv.val (i + 8) hi2, wordOf_packW, wordOf_packW, wordOf_packW]
+      rfl
+    | succ p =>
+      show ρ ((xorChain hRegs vRegs rest _).res.getD p 0) = _
+      exact ihval p (by simpa using hp)
+
+/-- One block (`blake2s_u32s`' loop body): the IV constants, the 80 G
+steps, the chaining xors. -/
+noncomputable def compressG (hRegs mRegs : List ℕ) (t : ℕ) (f : Bool)
+    (n : ℕ) : Out (List ℕ) :=
+  let consts : List Op :=
+    (List.range 8).map fun j => .const (n + j) (packW (ivInit t f (8 + j)))
+  let v0 : List ℕ := hRegs ++ (List.range 8).map fun j => n + j
+  let st := stepsG mRegs 80 v0 (n + 8)
+  let xs := xorChain hRegs st.res (List.range 8) st.next
+  ⟨consts ++ st.ops ++ xs.ops, xs.res, xs.next⟩
+
+set_option maxHeartbeats 1000000 in
+/-- **One block computes the spec's compression**: the output registers
+carry `Blake2s.compress` of the carried chaining and message words. -/
+theorem compressG_sound {ρ : ℕ → QM31} {hRegs mRegs : List ℕ}
+    {hws ms : List Blake2s.Word} {t n : ℕ} {f : Bool}
+    (hh : RegsWords ρ hRegs hws) (hm : RegsWords ρ mRegs ms)
+    (hh8 : hws.length = 8) (hm16 : ms.length = 16)
+    (h : AllHold ρ (compressG hRegs mRegs t f n).ops) :
+    (compressG hRegs mRegs t f n).res.length = 8 ∧
+    ∀ i, i < 8 →
+      ρ ((compressG hRegs mRegs t f n).res.getD i 0)
+        = packW (Blake2s.compress (fun j => hws.getD j 0)
+            (fun j => ms.getD j 0) t f i) := by
+  replace h : AllHold ρ
+      (((List.range 8).map fun j =>
+          Op.const (n + j) (packW (ivInit t f (8 + j)))) ++
+        (stepsG mRegs 80 (hRegs ++ (List.range 8).map fun j => n + j)
+          (n + 8)).ops ++
+        (xorChain hRegs
+          (stepsG mRegs 80 (hRegs ++ (List.range 8).map fun j => n + j)
+            (n + 8)).res (List.range 8)
+          (stepsG mRegs 80 (hRegs ++ (List.range 8).map fun j => n + j)
+            (n + 8)).next).ops) := h
+  rw [allHold_append, allHold_append] at h
+  obtain ⟨⟨hconsts, hsteps⟩, hxors⟩ := h
+  have hhlen : hRegs.length = 8 := by rw [hh.len, hh8]
+  -- The initial working vector's words.
+  have hws0 : RegsWords ρ (hRegs ++ (List.range 8).map fun j => n + j)
+      (hws ++ (List.range 8).map fun j => ivInit t f (8 + j)) := by
+    refine ⟨by simp [hhlen, hh8], fun j hj => ?_⟩
+    rw [List.length_append, List.length_map, List.length_range, hhlen] at hj
+    by_cases hj8 : j < 8
+    · rw [List.getD_eq_getElem?_getD, List.getElem?_append_left (by omega),
+        ← List.getD_eq_getElem?_getD,
+        List.getD_eq_getElem?_getD (l := hws ++ _),
+        List.getElem?_append_left (by omega), ← List.getD_eq_getElem?_getD]
+      exact hh.val j (by omega)
+    · have hj' : j - 8 < 8 := by omega
+      rw [List.getD_eq_getElem?_getD,
+        List.getElem?_append_right (by omega),
+        List.getElem?_map, hhlen,
+        List.getElem?_range (by omega : j - 8 < 8)]
+      rw [List.getD_eq_getElem?_getD (l := hws ++ _),
+        List.getElem?_append_right (by omega), hh8,
+        List.getElem?_map, List.getElem?_range (by omega : j - 8 < 8)]
+      have hc := hconsts (.const (n + (j - 8)) (packW (ivInit t f (8 + (j - 8)))))
+        (List.mem_map.mpr ⟨j - 8, by simp [hj'], rfl⟩)
+      simp only [Holds] at hc
+      simpa using hc
+  -- The words list is the spec's initial vector.
+  have hinit : hws ++ ((List.range 8).map fun j => ivInit t f (8 + j))
+      = Blake2s.initV (fun j => hws.getD j 0) t f := by
+    refine list_ext_getD (by simp [hh8, Blake2s.initV]) fun j h1 => ?_
+    have hj16 : j < 16 := by
+      have h1' := h1
+      rw [List.length_append, List.length_map, List.length_range, hh8] at h1'
+      omega
+    rw [initV_getD _ t f j hj16]
+    by_cases hj8 : j < 8
+    · rw [if_pos hj8, List.getD_eq_getElem?_getD,
+        List.getElem?_append_left (by omega), ← List.getD_eq_getElem?_getD]
+    · rw [if_neg hj8, List.getD_eq_getElem?_getD,
+        List.getElem?_append_right (by omega), hh8,
+        List.getElem?_map, List.getElem?_range (by omega : j - 8 < 8)]
+      simp only [Option.map_some, Option.getD_some]
+      rw [show 8 + (j - 8) = j from by omega]
+  obtain ⟨hstw, hstlen⟩ := stepsG_sound hm hm16 80
+    (hRegs ++ (List.range 8).map fun j => n + j)
+    (hws ++ (List.range 8).map fun j => ivInit t f (8 + j)) (n + 8)
+    (by omega) hws0 (by simp [hh8]) hsteps
+  rw [hinit] at hstw hstlen
+  have hvlen : (stepsG mRegs 80 (hRegs ++ (List.range 8).map fun j => n + j)
+      (n + 8)).res.length = 16 := by rw [hstw.len, hstlen]
+  obtain ⟨hxlen, hxval⟩ := xorChain_sound hh hstw (List.range 8)
+    (stepsG mRegs 80 (hRegs ++ (List.range 8).map fun j => n + j)
+      (n + 8)).next
+    (fun i hi => ⟨by rw [hhlen]; exact (List.mem_range.mp hi),
+      by rw [hvlen]; have := List.mem_range.mp hi; omega⟩) hxors
+  refine ⟨by rw [show (compressG hRegs mRegs t f n).res
+      = (xorChain hRegs (stepsG mRegs 80
+          (hRegs ++ (List.range 8).map fun j => n + j) (n + 8)).res
+        (List.range 8) (stepsG mRegs 80
+          (hRegs ++ (List.range 8).map fun j => n + j) (n + 8)).next).res
+      from rfl, hxlen, List.length_range], fun i hi => ?_⟩
+  have hri : (List.range 8).getD i 0 = i := by
+    rw [List.getD_eq_getElem?_getD, List.getElem?_range hi]
+    rfl
+  have := hxval i (by simpa using hi)
+  rw [hri] at this
+  show ρ ((xorChain hRegs (stepsG mRegs 80
+      (hRegs ++ (List.range 8).map fun j => n + j) (n + 8)).res
+      (List.range 8) (stepsG mRegs 80
+      (hRegs ++ (List.range 8).map fun j => n + j) (n + 8)).next).res.getD
+      i 0) = _
+  rw [this]
+  rfl
+
 end StwoVerifier.Gadgets
