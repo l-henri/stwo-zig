@@ -481,4 +481,126 @@ theorem friGroups_sound {ρ : ℕ → QM31} {α : QM31} {imMask zero alpha : ℕ
     rw [List.zipIdx_cons]
     simpa using hinv
 
+/-! ### The finalize loop and the product guard -/
+
+instance : Inhabited PG := ⟨⟨0, 0, 0, [], 0, 0⟩⟩
+
+/-- A finalized group's registers against its walk entry: the shared
+registers carry over, `b = d·v − a·P.y`. -/
+def FinFacts (ρ : ℕ → QM31) (pr : (ℕ × ℕ) × PG) (gr : GroupRegs) : Prop :=
+  gr.d = pr.2.d ∧ gr.e = pr.2.e ∧ gr.f = pr.2.f ∧ gr.coeffs = pr.2.coeffs ∧
+  gr.aSum = pr.2.aReg ∧
+  ρ gr.b = ρ pr.2.d * ρ pr.2.vReg - ρ pr.2.aReg * ρ pr.1.2
+
+/-- The tail of the finalize loop: per group `finalize`, then the
+product step `prod ← prod · d`. -/
+def finChain (prod : ℕ) : List ((ℕ × ℕ) × PG) → ℕ →
+    Out (List GroupRegs × ℕ)
+  | [], n => ⟨[], ([], prod), n⟩
+  | (k, g) :: rest, n =>
+    let fin := auxFinalize g.d g.vReg g.aReg k.2 n
+    let tail := finChain fin.next rest (fin.next + 1)
+    ⟨fin.ops ++ .mul fin.next prod g.d :: tail.ops,
+     (⟨g.d, g.e, g.f, g.coeffs, g.aReg, fin.res⟩ :: tail.res.1, tail.res.2),
+     tail.next⟩
+
+theorem finChain_sound {ρ : ℕ → QM31} :
+    ∀ (groups : List ((ℕ × ℕ) × PG)) (prod n : ℕ),
+      AllHold ρ (finChain prod groups n).ops →
+      (finChain prod groups n).res.1.length = groups.length ∧
+      ρ (finChain prod groups n).res.2
+        = ρ prod * (groups.map fun pr => ρ pr.2.d).prod ∧
+      ∀ idx, idx < groups.length →
+        FinFacts ρ (groups.getD idx default)
+          ((finChain prod groups n).res.1.getD idx default)
+  | [], prod, n, _ =>
+    ⟨rfl, by simp [finChain], fun idx hidx => absurd hidx (by simp)⟩
+  | (k, g) :: rest, prod, n, h => by
+    rw [show (finChain prod ((k, g) :: rest) n).ops =
+      (auxFinalize g.d g.vReg g.aReg k.2 n).ops ++
+        .mul (auxFinalize g.d g.vReg g.aReg k.2 n).next prod g.d ::
+          (finChain (auxFinalize g.d g.vReg g.aReg k.2 n).next rest
+            ((auxFinalize g.d g.vReg g.aReg k.2 n).next + 1)).ops from rfl,
+      allHold_append, allHold_cons] at h
+    obtain ⟨hfin, hmul, htail⟩ := h
+    simp only [Holds] at hmul
+    obtain ⟨ihlen, ihprod, ihfacts⟩ := finChain_sound rest
+      (auxFinalize g.d g.vReg g.aReg k.2 n).next
+      ((auxFinalize g.d g.vReg g.aReg k.2 n).next + 1) htail
+    refine ⟨?_, ?_, fun idx hidx => ?_⟩
+    · show (finChain _ rest _).res.1.length + 1 = rest.length + 1
+      rw [ihlen]
+    · show ρ (finChain _ rest _).res.2 = _
+      rw [ihprod, hmul]
+      simp only [List.map_cons, List.prod_cons]
+      ring
+    · cases idx with
+      | zero =>
+        refine ⟨rfl, rfl, rfl, rfl, rfl, ?_⟩
+        show ρ (auxFinalize g.d g.vReg g.aReg k.2 n).res = _
+        exact auxFinalize_sound hfin
+      | succ idx =>
+        exact ihfacts idx (by rw [List.length_cons] at hidx; omega)
+
+/-- The whole finalize phase: the head group's `finalize` seeds the
+product, the chain follows, the closing `inv` gate guards it. -/
+def friFinalize (groups : List ((ℕ × ℕ) × PG)) (n : ℕ) :
+    Out (List GroupRegs) :=
+  match groups with
+  | [] => ⟨[.inv n 1], [], n + 1⟩
+  | (k, g) :: rest =>
+    let fin := auxFinalize g.d g.vReg g.aReg k.2 n
+    let tail := finChain g.d rest fin.next
+    ⟨fin.ops ++ tail.ops ++ [.inv tail.next tail.res.2],
+     ⟨g.d, g.e, g.f, g.coeffs, g.aReg, fin.res⟩ :: tail.res.1,
+     tail.next + 1⟩
+
+/-- **Finalize soundness**: each group's registers carry over with
+`b = d·v − a·P.y`, and the product guard forces every group's `d`
+nonzero. -/
+theorem friFinalize_sound {ρ : ℕ → QM31}
+    {groups : List ((ℕ × ℕ) × PG)} {n : ℕ}
+    (h : AllHold ρ (friFinalize groups n).ops) :
+    (friFinalize groups n).res.length = groups.length ∧
+    (∀ idx, idx < groups.length →
+      FinFacts ρ (groups.getD idx default)
+        ((friFinalize groups n).res.getD idx default)) ∧
+    ∀ pr ∈ groups, ρ pr.2.d ≠ 0 := by
+  match groups with
+  | [] =>
+    exact ⟨rfl, fun idx hidx => absurd hidx (by simp),
+      fun pr hpr => absurd hpr (by simp)⟩
+  | (k, g) :: rest =>
+    rw [show (friFinalize ((k, g) :: rest) n).ops =
+      (auxFinalize g.d g.vReg g.aReg k.2 n).ops ++
+        (finChain g.d rest (auxFinalize g.d g.vReg g.aReg k.2 n).next).ops ++
+        [.inv (finChain g.d rest
+            (auxFinalize g.d g.vReg g.aReg k.2 n).next).next
+          (finChain g.d rest
+            (auxFinalize g.d g.vReg g.aReg k.2 n).next).res.2]
+      from rfl, allHold_append, allHold_append, allHold_cons] at h
+    obtain ⟨⟨hfin, hchain⟩, hinv, -⟩ := h
+    obtain ⟨clen, cprod, cfacts⟩ := finChain_sound rest g.d
+      (auxFinalize g.d g.vReg g.aReg k.2 n).next hchain
+    have hne : ρ (finChain g.d rest
+        (auxFinalize g.d g.vReg g.aReg k.2 n).next).res.2 ≠ 0 :=
+      inv_gate_ne_zero hinv
+    rw [cprod] at hne
+    refine ⟨?_, fun idx hidx => ?_, fun pr hpr => ?_⟩
+    · show (finChain _ rest _).res.1.length + 1 = rest.length + 1
+      rw [clen]
+    · cases idx with
+      | zero =>
+        refine ⟨rfl, rfl, rfl, rfl, rfl, ?_⟩
+        show ρ (auxFinalize g.d g.vReg g.aReg k.2 n).res = _
+        exact auxFinalize_sound hfin
+      | succ idx =>
+        exact cfacts idx (by rw [List.length_cons] at hidx; omega)
+    · rcases List.mem_cons.mp hpr with h1 | h1
+      · rw [h1]
+        exact left_ne_zero_of_mul hne
+      · intro hzero
+        apply right_ne_zero_of_mul hne
+        exact List.prod_eq_zero (List.mem_map.mpr ⟨pr, h1, hzero⟩)
+
 end StwoVerifier.Gadgets
