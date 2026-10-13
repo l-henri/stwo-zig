@@ -1,4 +1,4 @@
-# Report: verifier formalization, session of 2026-10-12
+# Report: verifier formalization, sessions of 2026-10-12/13
 
 Per `VERIFIER_FORMALIZATION_BRIEF.md` §6. Checkout: worktree
 `../stwo-zig-verifier-lean`, branch `formal/in-circuit-verifier` (cut from
@@ -218,6 +218,68 @@ pointwise equality with the constant coefficient (the circuit's closing
 on success the committed layers pair the proof layers one-to-one in
 order and, at the pinned fold step 1, the degree bound drops by exactly
 one per layer.
+
+## Deliverable 5 — `verify` with `CircuitStatement` (scope B): **spec + differential done**
+
+The circuit statement is now concrete on the spec side, validated
+end-to-end against real circuit proofs.
+
+**The circuit AIR as data.** The in-circuit composition evaluation is an
+interpreter over the committed projection
+(`vectors/circuit/official/compiled_air_constraints_v1.bin`).
+`harness/airdump.zig` replays the 11-component evaluator table and the
+composition accumulator through a recording context and flattens the whole
+`computeCompositionPolynomial` denotation into one 1901-node arithmetic DAG
+over the composition inputs (plus 5 recorded `eq` side conditions — the
+generated components' fixed-size checks — and 5 n-instances-bit atoms).
+The DAG is profile-independent (static preprocessed ids, every bit read
+≤ 20). `CircuitAirData.lean` (generated) carries it;
+`CircuitAirEval.lean` evaluates it over `QM31` and adds the vanishing
+division. `lake exe aircheck`: 7/7 against the real Zig
+`computeCompositionPolynomial` running eagerly over values (5 consistent
+size profiles, 2 deliberately inconsistent ones whose `eq` flags must
+trip).
+
+**`circuitAir : Air`** (`CircuitAir.lean`): mask points — every
+preprocessed column `[oods]` (the circuit prover commits with
+`include_all_preprocessed_columns`), base columns `[oods]`, cumulative
+sums `[oods − step, oods]`; `harness/maskcheck.zig` verifies that shape
+against the captured native programs (all 11 components, every eval delta
+1). `evalComposition` flattens the sampled values and statement data into
+the DAG inputs (component sizes as `2^log` scalars and one-hot bits, the
+exact values the bit-decomposition gadgets pin).
+
+**`circuitAccepts`** (`CircuitVerify.lean`): the statement transcript —
+salt, FRI config, preprocessed-root commit, circuit hash
+`Blake2s(config words ‖ root)` mixed as a root, the eight output values
+mixed as felts, trace-root commit, the 20-bit interaction PoW, the
+`z, alpha` draw, the public LogUp sum against the claimed sums, claimed
+sums mixed, interaction-root commit — plus the statement validity checks
+(5-bit log sizes under the trace log, the relation-use bound), then
+`NativeAccepts` with `circuitAir`.
+
+**Differential** (`harness/circuitharness.zig`, `lake exe circuitcheck`):
+all four R7 digest-output circuits (fibonacci, triple_xor, m31_to_u32,
+blake_g_gate) proved by the in-repo prover under the pinned profile
+(Blake2sM31, fold step 1, blowup 1, last layer 0), judged by the shipping
+acceptance predicate (`circuit_cpu.verify.verifyProofBytes`, the
+verification circuit built with values) on the baseline, 17 targeted
+tampers (statement fields, salt, both nonces, claimed sums, every sampled
+tree, three roots, a queried value, the last layer) and 10 seeded fuzz
+flips each — every tamper applied to the native proof in place and
+re-serialized so both verifiers judge the same object. **112/112 agree**,
+baselines accepting: the circuit hash, the whole transcript, the LogUp
+sum, the composition DAG at the real OODS point, the mask geometry,
+Merkle, DEEP, FRI and PoW are exact on real proofs. The comparison is
+verdict-level (the in-circuit verifier rejects by unsatisfiability,
+without an error code).
+
+**Trusted boundary for scope B so far**: the recorded DAG equals the
+emitter's interpretation (differentially validated, not yet a theorem);
+the wire↔native proof conversion (`verifier_proof.zig`) is exercised, not
+modeled; gadget-level proofs of the statement phases (channel mixes,
+Blake2s circuit hash, claim checks) remain the scope-B/C port backlog
+(Merkle and channel gadgets).
 
 ## Open questions (brief §7)
 
