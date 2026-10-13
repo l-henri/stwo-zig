@@ -74,3 +74,5 @@ import StwoVerifier.VerifyG
 import StwoVerifier.ReadOff
 import StwoVerifier.SelectShapes
 import StwoVerifier.TreeGlue
+import StwoVerifier.Phase5Glue
+import StwoVerifier.ScopeB

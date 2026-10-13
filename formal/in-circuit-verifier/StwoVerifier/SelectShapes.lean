@@ -122,4 +122,19 @@ theorem phase3G_facts {ρ : ℕ → QM31} {zero one L nq powBits low high : ℕ}
   beta_reduce at h hcov ⊢
   exact selectQueriesPoint_facts hL2 hL30 hzero hcov hSQ
 
+theorem friLoopG_length : ∀ (low high : ℕ) (rs : List (List ℕ)) (n : ℕ),
+    (friLoopG low high rs n).res.2.length = rs.length
+  | _, _, [], _ => rfl
+  | low, high, r :: rs, n => by
+    show (friLoopG _ _ rs _).res.2.length + 1 = rs.length + 1
+    rw [friLoopG_length]
+
+theorem phase3G_alphas_length {zero one L nq powBits low high : ℕ}
+    {friRoots : List (List ℕ)} {lastCoefs : List ℕ} {powNonce n : ℕ} :
+    (phase3G zero one L nq powBits low high friRoots lastCoefs powNonce n).res.alphas.length
+      = friRoots.length := by
+  unfold phase3G
+  rw [seq_res, seq_res, seq_res, seq_res, seq_res, seq_res]
+  exact friLoopG_length _ _ _ _
+
 end StwoVerifier.Gadgets
