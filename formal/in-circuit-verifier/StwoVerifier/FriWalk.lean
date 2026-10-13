@@ -309,4 +309,17 @@ theorem friDecommit1_sound {ρ : ℕ → QM31} {one nQ lastCoeff n : ℕ}
   exact lastLayerEqs_spec c c0 hpoly hc positions
     (by rw [hplen, hlen]) he
 
+/-- The unpacked scalar twiddle inverts the fold coordinate: `simd.inv`
+pins the lane product in `F`, `unpackIdx` lifts the lane to the scalar
+register, and the base-field embedding carries the inverse — exactly
+the `htws` hypothesis of `friLayers1_sound`. -/
+theorem scalar_inverts {ρ : ℕ → QM31} {r : ℕ} {lt lx : F}
+    (hr : ρ r = QM31.fromBase lt) (hinv : lt * lx = 1) :
+    ρ r * QM31.fromBase lx = 1 := by
+  rw [hr,
+    show QM31.fromBase lt * QM31.fromBase lx = QM31.fromBase (lt * lx) from
+      (map_mul baseHom lt lx).symm,
+    hinv]
+  exact map_one baseHom
+
 end StwoVerifier.Gadgets

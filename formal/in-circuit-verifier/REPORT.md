@@ -187,7 +187,13 @@ outstanding mechanical work, not new mathematics.
   computation on the spec side; `commitInner_domains` pins the spec's
   stored layer domains to the successive doubles). With
   `base0_eq_evenPoint` for the circle layer, every fold-step-1 twiddle
-  is tied to the exact spec fold coordinate.
+  is tied to the exact spec fold coordinate — composed in
+  **`twiddleChain1_spec`** (`TwiddleSpec.lean`): with the query-point
+  lane pinned to the spec domain point and the bit lanes carrying the
+  query's bits, every per-layer twiddle lane multiplies
+  `specFoldCoord` to one; `scalar_inverts` carries this through the
+  per-query `unpackIdx` to the scalar registers `friLayers1_sound`
+  consumes.
 
 **Remaining**: response-register provenance (the `Bound` data and the
 position/value threading from `deepRows` into `friLayers1`), the
