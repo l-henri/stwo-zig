@@ -39,3 +39,4 @@ import StwoVerifier.CircuitAir
 import StwoVerifier.CircuitVerify
 import StwoVerifier.OodsResponses
 import StwoVerifier.ResponseOrder
+import StwoVerifier.GroupedRows
