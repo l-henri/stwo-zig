@@ -51,3 +51,4 @@ import StwoVerifier.MerkleBatch
 import StwoVerifier.FriBatch
 import StwoVerifier.StatementGadgets
 import StwoVerifier.RelationUses
+import StwoVerifier.LogupGadgets

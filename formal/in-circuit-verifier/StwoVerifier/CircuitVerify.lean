@@ -84,23 +84,29 @@ def combineTerm (element : List QM31) (z alpha : QM31) : QM31 :=
   | [] => -z
   | v :: rest => rest.foldl (fun acc e => acc * alpha + e) v - z
 
+/-- The gate relation id as a felt. -/
+def gateFelt : QM31 := QM31.fromBase ((378353459 : Nat) : F)
+
+/-- The public LogUp entries: the output digest words at addresses
+`3..11`, each as lanes `(lo16, hi16, 0, 0)`, then `u` at address 2. -/
+def logupEntries (outputDigest : List Nat) : List (Nat × List QM31) :=
+  (outputDigest.zipIdx.map fun (x : Nat × Nat) =>
+    (3 + x.2, [QM31.fromBase ((x.1 % 2 ^ 16 : Nat) : F),
+               QM31.fromBase ((x.1 / 2 ^ 16 : Nat) : F), QM31.zero, QM31.zero]))
+    ++ [(2, [QM31.zero, QM31.zero, QM31.one, QM31.zero])]
+
+/-- One public LogUp term `1 / combine(GATE, address, lanes)`. -/
+def logupTerm (z alpha : QM31) (e : Nat × List QM31) : Except VError QM31 :=
+  match (combineTerm (gateFelt :: QM31.fromBase ((e.1 : Nat) : F) :: e.2) z alpha).inv? with
+  | some t => pure t
+  | none => throw .divisionByZero
+
 /-- `public_logup_sum` of the circuit statement: the gate-relation uses
 of the output digest words at addresses `3..11` and of `u` at
 address 2, each `1 / combine(GATE, address, lanes)`. -/
 def publicLogupSum (outputDigest : List Nat) (z alpha : QM31) :
     Except VError QM31 := do
-  let gate : QM31 := QM31.fromBase ((378353459 : Nat) : F)
-  let uEntry : Nat × List QM31 :=
-    (2, [QM31.zero, QM31.zero, QM31.one, QM31.zero])
-  let wordEntries := outputDigest.zipIdx.map fun (w, i) =>
-    (3 + i, [QM31.fromBase ((w % 2 ^ 16 : Nat) : F),
-             QM31.fromBase ((w / 2 ^ 16 : Nat) : F), QM31.zero, QM31.zero])
-  let entries := wordEntries ++ [uEntry]
-  let terms ← entries.mapM fun (address, lanes) => do
-    let element := gate :: QM31.fromBase ((address : Nat) : F) :: lanes
-    match (combineTerm element z alpha).inv? with
-    | some t => pure t
-    | none => throw .divisionByZero
+  let terms ← (logupEntries outputDigest).mapM (logupTerm z alpha)
   return terms.foldl (· + ·) QM31.zero
 
 /-- Per-column log sizes of the trace tree (`ComponentList` order). -/
