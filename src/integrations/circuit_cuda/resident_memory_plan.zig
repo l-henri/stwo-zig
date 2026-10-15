@@ -253,7 +253,7 @@ const Builder = struct {
         try self.add(.pow_nonce, 0, 2, 2, .trace_commit, .pow);
         try self.add(.circuit_hash, 0, 8, 8, .ingress, .trace_commit);
         try self.add(.error_flag, 0, 1, 1, .trace_generation, .fri_commit);
-        try self.addInteraction(input.interaction);
+        try self.addInteraction(input.interaction, input.composition.relationAlphaPowerCount());
         try self.addComposition(input.composition);
         try self.addOods(input.oods);
         try self.addQuotient(input.quotient, input.fri.layers[0].evaluation_log);
@@ -262,12 +262,12 @@ const Builder = struct {
         try self.add(.terminal_bundle, 0, input.terminal.total_words, 64, .ingress, .proof_assembly);
     }
 
-    fn addInteraction(self: *Builder, plan: *const interaction.Plan) !void {
+    fn addInteraction(self: *Builder, plan: *const interaction.Plan, alpha_powers: u32) !void {
         const count = plan.row_counts.len;
         const pointer_words = @sizeOf(usize) / 4;
         const scratch = try plan.scratchWords();
         try self.add(.interaction_drawn, 0, 8, 4, .trace_commit, .trace_commit);
-        try self.add(.interaction_powers, 0, 24, 4, .trace_commit, .constraint_evaluation);
+        try self.add(.interaction_powers, 0, try mul(alpha_powers, 4), 4, .trace_commit, .constraint_evaluation);
         try self.add(.interaction_z, 0, 4, 4, .trace_commit, .constraint_evaluation);
         for (plan.row_counts, cuda.runtime.stages.circuit_interaction.secure_widths, 0..) |rows, width, index|
             try self.add(.interaction_denominator, index, try mul(try mul(rows, width), 4), 64, .trace_commit, .trace_commit);

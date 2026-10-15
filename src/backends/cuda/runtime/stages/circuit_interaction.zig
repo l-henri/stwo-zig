@@ -45,17 +45,17 @@ pub fn OpsFor(comptime Api: type, comptime ChallengeApi: type) type {
         ) runtime_error.Error!void {
             const stage = telemetry.Stage.trace_commit;
             try common.requireStage(session, stage);
-            if (drawn_z_alpha.len != 2 or powers.len != 6 or z.len != 1)
+            if (drawn_z_alpha.len != 2 or powers.len < 6 or z.len != 1)
                 return error.InvalidKernelDescriptor;
             const field = @import("../../abi/field.zig").SecureField;
             const drawn = try layout.resident(session, field, drawn_z_alpha, 2);
-            const expanded = try layout.resident(session, field, powers, 6);
+            const expanded = try layout.resident(session, field, powers, powers.len);
             const extracted = try layout.resident(session, field, z, 1);
             try layout.requireDisjoint(&.{ expanded.range, extracted.range }, &.{drawn.range});
             try common.record(session, stage, ChallengeApi.stwo_relation_expand_challenges_on(
                 drawn.pointer,
                 expanded.pointer,
-                6,
+                std.math.cast(u32, powers.len) orelse return error.InvalidKernelDescriptor,
                 @ptrCast(extracted.pointer),
                 session.context.stream,
             ));

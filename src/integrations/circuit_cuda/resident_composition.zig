@@ -10,6 +10,9 @@ const eval = cairo_cuda.executor.eval.topology;
 const parametric = cairo_cuda.parametric_eval;
 const air_aot = @import("air_aot.zig");
 
+/// Alpha powers α⁰…α⁵ drawn for the circuit's own lookup relations.
+pub const circuit_alpha_power_count = 6;
+
 pub const Placement = struct {
     component_index: u32,
     part_index: u32,
@@ -106,6 +109,13 @@ pub const Plan = struct {
             .denominator_inverses = denominators,
             .preprocessed_logs = preprocessed_logs,
         };
+    }
+
+    /// Length of the shared relation alpha-power buffer: the circuit's own
+    /// fraction producers fill six powers, and composition reads up to the
+    /// widest relation in the bundle.
+    pub fn relationAlphaPowerCount(self: *const Plan) u32 {
+        return @max(circuit_alpha_power_count, self.topology.relationAlphaPowerCount());
     }
 
     pub fn deinit(self: *Plan) void {

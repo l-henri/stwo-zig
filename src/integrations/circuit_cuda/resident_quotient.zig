@@ -58,7 +58,7 @@ const Builder = struct {
 
     fn appendColumn(self: *Builder, tree_index: usize, column: usize, offsets: []const i32) !void {
         const tree = self.geometry.trees[tree_index];
-        if (column >= tree.column_logs.len or offsets.len == 0 or offsets.len > 2)
+        if (column >= tree.column_logs.len or offsets.len == 0)
             return error.InvalidCircuitQuotientGeometry;
         const log = tree.column_logs[column];
         if (log == 0 or log >= self.geometry.fri_input_log)
@@ -336,6 +336,53 @@ test "resident circuit quotient admits all sampled terms and native-height bucke
     var bucket_plan = try buckets.build(allocator, topology);
     defer bucket_plan.deinit();
     try std.testing.expect(bucket_plan.descriptors.len != 0);
+}
+
+test "resident circuit quotient samples wide masks without a periodic term" {
+    // The CPU PCS adds the periodic sample only to a column with exactly two
+    // offsets (`core/pcs/quotients/samples.zig`); a wider mask gets one term
+    // per offset.
+    const allocator = std.testing.allocator;
+    var no_columns = [_]u32{};
+    var main_logs = [_]u32{ 5, 5 };
+    const geometry = geometry_module.Geometry{
+        .allocator = allocator,
+        .trees = .{
+            .{ .role = .preprocessed, .column_logs = &no_columns, .lifted_log = 7 },
+            .{ .role = .main, .column_logs = &main_logs, .lifted_log = 7 },
+            .{ .role = .interaction, .column_logs = &no_columns, .lifted_log = 7 },
+            .{ .role = .composition, .column_logs = &no_columns, .lifted_log = 7 },
+        },
+        .fri_layers = &.{},
+        .composition_evaluation_log = 7,
+        .fri_input_log = 7,
+        .identity = [_]u8{0} ** 32,
+    };
+    var builder = Builder{
+        .allocator = allocator,
+        .geometry = &geometry,
+        .blowup = 1,
+        .trace_step = canonic.CanonicCoset.new(geometry.fri_input_log - 1).step(),
+        .lifting_generator = canonic.CanonicCoset.new(geometry.fri_input_log).step(),
+    };
+    defer builder.deinit();
+    try builder.appendColumn(1, 0, &.{ -1, 0, 1, 3 });
+    try builder.appendColumn(1, 1, &.{ 0, 1 });
+
+    try std.testing.expectEqualSlices(u32, &.{ 0, 0, 0, 0, 1, 1 }, builder.samples.items);
+    try std.testing.expectEqual(@as(usize, 7), builder.terms.items.len);
+    for (builder.terms.items[0..4], 0..) |term, ordinal| {
+        try std.testing.expectEqual(@as(u32, @intCast(ordinal)), term.descriptor.sample_index);
+        try std.testing.expectEqual(@as(u32, 0), term.descriptor.periodic);
+    }
+    const periodic = builder.terms.items[4];
+    try std.testing.expectEqual(@as(u32, 1), periodic.descriptor.periodic);
+    try std.testing.expectEqual(@as(u32, 5), periodic.descriptor.sample_index);
+    for (builder.terms.items[5..]) |term|
+        try std.testing.expectEqual(@as(u32, 0), term.descriptor.periodic);
+    // Offsets -1, 0, 1 and 3 plus the shifted period: five distinct shifts,
+    // with offsets 0 and 1 shared between the two columns.
+    try std.testing.expectEqual(@as(usize, 5), builder.groups.items.len);
 }
 
 test "resident circuit quotient binds the shared native CUDA executor" {

@@ -54,7 +54,7 @@ pub const Layout = struct {
             for (oods.sources) |source| {
                 if (source >= source_first and source < source_end) {
                     const count = &owned[source - source_first];
-                    if (count.* == 2) return error.InvalidCircuitProofLayout;
+                    if (count.* == std.math.maxInt(u8)) return error.InvalidCircuitProofLayout;
                     count.* += 1;
                 }
             }
@@ -102,7 +102,7 @@ pub const Layout = struct {
                 counts.len != tree.column_count or tree.column_log_size > tree.commitment_log_size)
                 return error.InvalidCircuitProofLayout;
             for (counts) |count| {
-                if (count == 0 or count > 2) return error.InvalidCircuitProofLayout;
+                if (count == 0) return error.InvalidCircuitProofLayout;
                 samples += count;
             }
         }

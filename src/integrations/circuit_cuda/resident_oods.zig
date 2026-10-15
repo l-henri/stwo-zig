@@ -72,12 +72,12 @@ pub const Plan = struct {
         for (trees[0].column_logs, 0..) |_, column|
             try samples.append(allocator, try sample(trees[0], 0, column, column_offsets[0][column], 0, blowup));
         for (masks.base_offsets, 0..) |offsets, column| {
-            if (offsets.items.len == 0 or offsets.items.len > 2) return error.InvalidCircuitOodsGeometry;
+            if (offsets.items.len == 0) return error.InvalidCircuitOodsGeometry;
             for (offsets.items) |offset|
                 try samples.append(allocator, try sample(trees[1], 1, column, column_offsets[1][column], offset, blowup));
         }
         for (masks.interaction_offsets, 0..) |offsets, column| {
-            if (offsets.items.len == 0 or offsets.items.len > 2) return error.InvalidCircuitOodsGeometry;
+            if (offsets.items.len == 0) return error.InvalidCircuitOodsGeometry;
             for (offsets.items) |offset|
                 try samples.append(allocator, try sample(trees[2], 2, column, column_offsets[2][column], offset, blowup));
         }

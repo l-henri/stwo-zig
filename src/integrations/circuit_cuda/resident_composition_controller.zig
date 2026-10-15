@@ -275,7 +275,7 @@ fn validateBuffers(plan: *const plan_module.Plan, buffers: Buffers) !void {
         buffers.random_powers.len != summary.constraint_count or
         buffers.alpha.len != 1 or buffers.relation_z.len != 1 or
         buffers.claimed_sums.len != summary.component_count or
-        buffers.relation_alpha_powers.len != 6 or
+        buffers.relation_alpha_powers.len != plan.relationAlphaPowerCount() or
         buffers.forward_twiddles.len < try pow2(plan.topology.accumulators[plan.topology.accumulators.len - 1].evaluation_log_size - 1) or
         buffers.inverse_twiddles.len < try pow2(plan.topology.accumulators[plan.topology.accumulators.len - 1].evaluation_log_size - 1) or
         buffers.composition_coefficients.len != 8 * (try pow2(plan.topology.accumulators[plan.topology.accumulators.len - 1].evaluation_log_size - 1)))
@@ -429,7 +429,7 @@ test "resident circuit composition builds checked arena placements for all eleve
         .random_powers = builder.alloc(cuda.abi.field.SecureField, @intCast(summary.constraint_count)),
         .alpha = builder.alloc(cuda.abi.field.SecureField, 1),
         .relation_z = builder.alloc(cuda.abi.field.SecureField, 1),
-        .relation_alpha_powers = builder.alloc(cuda.abi.field.SecureField, 6),
+        .relation_alpha_powers = builder.alloc(cuda.abi.field.SecureField, plan.relationAlphaPowerCount()),
         .claimed_sums = builder.alloc(cuda.abi.field.SecureField, summary.component_count),
         .composition_coefficients = builder.alloc(u32, 8 * try pow2(maximum_log - 1)),
         .forward_twiddles = builder.alloc(u32, try pow2(maximum_log - 1)),

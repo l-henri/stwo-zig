@@ -153,3 +153,72 @@ test "canonical eval reuses only identical commitment domains" {
     try std.testing.expectEqual(first.source_count, first.recompute_source_count);
     for (larger.sources[first.first_source..][0..first.source_count]) |source| try std.testing.expect(!source.reuse_committed_lde);
 }
+
+test "eval topology admits a component without interaction columns" {
+    const allocator = std.testing.allocator;
+    var bundle = try composition.Bundle.readFile(
+        allocator,
+        "vectors/cairo/sn_pie_2_composition.bin",
+    );
+    defer bundle.deinit();
+    var fixed = try fixed_tables.Bundle.readFile(
+        allocator,
+        "vectors/cairo/cairo_fixed_tables.bin",
+    );
+    defer fixed.deinit();
+    const preprocessed_logs = try semantic_authority.preprocessedLogs(
+        allocator,
+        fixed,
+    );
+    defer allocator.free(preprocessed_logs);
+
+    var reference = try topology.Topology.derive(allocator, bundle, preprocessed_logs);
+    defer reference.deinit();
+    const removed = reference.components[0].interaction_count;
+    try std.testing.expect(removed > 0);
+
+    // An empty tree-2 span and an absent one describe the same lookup-free
+    // component.
+    const spans = bundle.components[0].trace_spans;
+    var interaction_index: ?usize = null;
+    for (spans, 0..) |span, index| {
+        if (span.tree == 2) interaction_index = index;
+    }
+    const saved = spans[interaction_index.?];
+    defer spans[interaction_index.?] = saved;
+    spans[interaction_index.?].start = saved.end;
+    var empty = try topology.Topology.derive(allocator, bundle, preprocessed_logs);
+    defer empty.deinit();
+
+    var kept: [64]composition.TraceSpan = undefined;
+    var kept_len: usize = 0;
+    for (spans) |span| {
+        if (span.tree == 2) continue;
+        kept[kept_len] = span;
+        kept_len += 1;
+    }
+    bundle.components[0].trace_spans = kept[0..kept_len];
+    defer bundle.components[0].trace_spans = spans;
+    var absent = try topology.Topology.derive(allocator, bundle, preprocessed_logs);
+    defer absent.deinit();
+
+    for ([_]*const topology.Topology{ &empty, &absent }) |derived| {
+        const component = derived.components[0];
+        try std.testing.expectEqual(@as(u32, 0), component.interaction_count);
+        try std.testing.expectEqual(
+            reference.components[0].source_count - removed,
+            component.source_count,
+        );
+        try std.testing.expectEqual(
+            reference.sources.len - removed,
+            derived.sources.len,
+        );
+        for (derived.sources[component.first_source..][0..component.source_count]) |source|
+            try std.testing.expect(source.role != .interaction);
+        try std.testing.expectEqual(
+            reference.summary.interaction_offset_words,
+            derived.summary.interaction_offset_words,
+        );
+        try std.testing.expect(!std.mem.eql(u8, &reference.identity, &derived.identity));
+    }
+}

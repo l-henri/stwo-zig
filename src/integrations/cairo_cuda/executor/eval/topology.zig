@@ -147,7 +147,7 @@ pub const Topology = struct {
             component_index,
         | {
             const main = try uniqueSpan(captured, 1);
-            const interaction = try uniqueSpan(captured, 2);
+            const interaction = try interactionSpan(captured);
             const main_count = try spanLength(main);
             const interaction_count = try spanLength(interaction);
             const source_count = try add(
@@ -326,6 +326,19 @@ pub const Topology = struct {
         };
     }
 
+    /// Relation alpha powers α⁰…αᵏ the extended parameters read, where k is
+    /// the widest power any lookup references. The parameter kernel skips a
+    /// descriptor whose power is past the bound buffer, so callers size the
+    /// buffer from this.
+    pub fn relationAlphaPowerCount(self: *const Topology) u32 {
+        var powers: u32 = 1;
+        for (self.extended_parameter_descriptors) |descriptor| switch (descriptor.kind) {
+            .lookup_alpha_power, .lookup_alpha_power_scaled => powers = @max(powers, descriptor.source_index + 1),
+            else => {},
+        };
+        return powers;
+    }
+
     pub fn deinit(self: *Topology) void {
         self.allocator.free(self.accumulators);
         self.allocator.free(self.extended_parameter_descriptors);
@@ -348,7 +361,7 @@ fn count(bundle: composition.Bundle) !Counts {
     var extended_parameters: u64 = 0;
     for (bundle.components) |component| {
         const main = try uniqueSpan(component, 1);
-        const interaction = try uniqueSpan(component, 2);
+        const interaction = try interactionSpan(component);
         sources = try add(
             sources,
             try add(
@@ -416,6 +429,19 @@ fn uniqueSpan(
         result = span;
     }
     return result orelse error.InvalidCairoEvalTopology;
+}
+
+/// A component without lookups has no interaction columns: its tree-2 span
+/// is absent or empty, and it contributes no interaction sources.
+fn interactionSpan(component: composition.Component) !composition.TraceSpan {
+    var result: ?composition.TraceSpan = null;
+    for (component.trace_spans) |span| {
+        if (span.tree != 2) continue;
+        if (result != null or span.end < span.start)
+            return error.InvalidCairoEvalTopology;
+        result = span;
+    }
+    return result orelse .{ .tree = 2, .start = 0, .end = 0 };
 }
 
 fn spanLength(span: composition.TraceSpan) !u64 {

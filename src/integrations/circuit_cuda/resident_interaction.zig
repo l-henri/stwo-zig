@@ -133,7 +133,7 @@ pub const Buffers = struct {
         if (self.preprocessed_columns.len != preprocessed.N_PREPROCESSED_COLUMNS or
             self.base_columns.len != @import("resident_witness.zig").base_column_count or
             self.interaction_columns.len != interaction_column_count or
-            self.drawn_z_alpha.len != 2 or self.alpha_powers.len != 6 or self.z.len != 1 or
+            self.drawn_z_alpha.len != 2 or self.alpha_powers.len < 6 or self.z.len != 1 or
             self.denominators.len != count or self.claimed_sums.len != count or
             self.error_flag.len != 1 or
             self.output_pointer_table.len != interaction_column_count * pointer_words or
